@@ -4,24 +4,25 @@ Pull requests are welcome, and so are bug reports and ideas as issues. Security 
 through [SECURITY.md](SECURITY.md), not a public issue.
 
 - For anything bigger than a fix, open an issue first so the approach is agreed before you build it.
-- A pull request needs `make publishable-check` to pass (see [the readiness gate](#the-readiness-gate)).
+- A pull request needs `make test` to pass, and `swift test` in `clients/macos` when it changes the app.
+- Keep credentials out of commits: GitHub secret scanning and push protection are on for this
+  repository and block a recognised secret.
 - CI runs on a first-time contributor's pull request after a maintainer approves the run.
 - Contributions are under the [licence](LICENSE) (MIT).
 
-The rest of this file is dev notes: how to set up a dev environment, run the tests, pass the
-readiness gate, and add a backend.
+The rest of this file is dev notes: how to set up a dev environment, run the tests, and add a
+backend.
 
 voice-say is a local-only text-to-speech system: one Python daemon owns the render pipeline, and
 thin clients (the `voice-say` CLI, with `render` to make audio, and a macOS app) funnel through it.
-Changes should preserve two invariants: the **single render path** (every render goes through
-the daemon's engine) and the **tracked-core-vs-private-overlay** code seam (no secrets, machine
-paths, or personal data in tracked code — see
-[the tracked-core / private-overlay boundary](docs/internals/public-vs-private.md)). Your own
-voices, backends and settings live in the untracked overlay.
+Changes should preserve the **single render path**: every render goes through the daemon's engine.
+Keep secrets, machine paths and personal data out of committed files; your own settings go in
+`daemon/config.local.toml` and your own backends in a catalog file outside the repo (see
+[Configuration](docs/setup/configuration.md)), both untracked.
 
 ## Dev setup
 
-Requires Python 3.10–3.12 (CI tests 3.11 and 3.12). `make setup` does the following for you; by
+Requires Python 3.10–3.12 (CI tests all three). `make setup` does the following for you; by
 hand, the daemon package lives in `daemon/`, so install from there:
 
 ```bash
@@ -67,34 +68,6 @@ cd clients/macos
 swift test
 ```
 
-## The readiness gate
-
-Before a commit lands, run the readiness gate:
-
-```bash
-make publishable-check
-```
-
-The gate enforces the tracked-core-vs-private-overlay code seam — it keeps private voices and
-machine-specific config out of the tracked code. It blocks the
-commit if any of the following fail:
-
-- **Secrets** — credentials, tokens, or keys in tracked files.
-- **Banned terms** — personal, proprietary, or organization-specific names, and absolute home
-  paths. The real list is private: the script reads it from
-  `~/.config/voice-say/publishable-terms.sh` on the maintainer's machine. Without that file (a fork,
-  and the CI run) this step checks only the placeholder names and home paths, so a green CI gate
-  does not prove the private list passed.
-- **Non-generic committed defaults** — the committed config must ship generic defaults
-  (e.g. `default_backend = kokoro`, `default_voice = default`). Local specifics belong only in the
-  untracked config overlay, never in tracked code.
-- **Tests** — `pytest` must be green.
-- **License / README** — both `LICENSE` and `README.md` must be present.
-
-> The gate is the enforcement arm of [ADR-0001](docs/adr/0001-centralize-and-publishable.md) and the
-> [tracked-core / private-overlay boundary](docs/internals/public-vs-private.md). Treat a red gate as
-> a blocker.
-
 ## Code layout
 
 ```
@@ -104,9 +77,9 @@ daemon/voice_say/         daemon package (the one render path)
   _routes_*.py            render / history / meta route handlers
   _sinks.py / _db.py      artefact writers (archive, voice.db) + SQLite helpers
   cli.py                  the voice-say library CLI (urllib, proxies the daemon)
-cli/                      voice-say (+ voice-say-render) + voice-ctl
+cli/                      voice-say (+ voice-say-render, voice-say-stream) + voice-ctl
 clients/macos/            VoiceSay — native SwiftUI app
-docs/                     architecture, HTTP/CLI reference, setup, ADRs
+docs/                     architecture, HTTP/CLI reference, setup
 ```
 
 All routes ultimately call `engine.render()`, so the on-disk render contract lives in exactly one
@@ -152,9 +125,11 @@ Tags: `daemon`, `cli`, `docs`, `ci`, `tests`, `chore`.
 
 ## Versioning
 
-Semver-style for our own bookkeeping. Bump `daemon/voice_say/__init__.py` `__version__` and
-`CHANGELOG.md` together. Note breaking HTTP changes (response shape, removed endpoints) in the
-CHANGELOG so the macOS app and CLI clients stay in sync.
+[Semantic Versioning](https://semver.org/). Bump `version` in `daemon/pyproject.toml` and
+`__version__` in `daemon/voice_say/__init__.py` together, and add the changes under a new heading in
+`CHANGELOG.md` ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style: Added, Changed,
+Fixed, Removed). Breaking HTTP changes (response shape, removed endpoints) go there too, so the
+macOS app and CLI clients stay in sync.
 
 ## Security
 

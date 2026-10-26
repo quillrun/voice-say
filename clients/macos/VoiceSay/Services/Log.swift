@@ -10,7 +10,7 @@ import Foundation
 import os
 
 enum Log {
-    /// The app's CFBundleIdentifier (a share build has its own).
+    /// The app's CFBundleIdentifier, so a build under another id logs apart.
     private static let subsystem = Bundle.main.bundleIdentifier ?? "local.voicesay.VoiceSay"
     /// Daemon HTTP writes and failures (overlays, config).
     static let daemon = Logger(subsystem: subsystem, category: "daemon")

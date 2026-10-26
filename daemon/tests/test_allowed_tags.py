@@ -1,10 +1,9 @@
-"""Closed-vocabulary enforcement (ADR-0002).
+"""Closed-vocabulary enforcement (allowed_tags).
 
 The committed default is an OPEN vocabulary (`allowed_tags = []`): any
 normalized tag is accepted. Setting `allowed_tags` to a non-empty list CLOSES
 the vocabulary — `/render` and overlay tag-edits then reject unknown tags.
-This was documented in ADR-0002 + tags.md + the diagrams but never enforced;
-these tests pin the enforcement.
+These tests pin the enforcement.
 """
 from __future__ import annotations
 

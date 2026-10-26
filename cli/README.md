@@ -27,6 +27,7 @@ voice-say render "hello world"                       # render + play, configured
 voice-say render --backend=kokoro "hello"            # a named backend
 voice-say render --voice=default "hello"             # specific voice
 voice-say render --no-play "long article…"           # render only
+voice-say render --out=./hello.wav "hello"          # keep a copy (named for the backend's format)
 voice-say render --json --no-play "…"                # one JSON line: id, path, title, duration_s, …
 voice-say render --stream "long article…"            # force chunked longform endpoint
 voice-say render --fast "quick reply"                 # instant streaming playback from the fast backend, unarchived
@@ -40,8 +41,7 @@ voice-say render --series="Daily Notes" --episode=17 --file=ep-17.body.txt   # l
 ```
 
 `--title` / `--title-from`, `--series` and `--episode` ride on the render
-request, so the new row carries them (an older daemon gets a follow-up
-`POST /overlays/<ts>`). The title replaces the `"It is a {weekday}…"`
+request, so the new row carries them. The title replaces the `"It is a {weekday}…"`
 first-sentence auto-title; `--title-from=<md>` reads the file's first `# `
 heading. `--title` wins if both are given. `--episode` must be a whole number
 ≥ 0 (else exit 4 before rendering). None of these apply to `--fast`.
@@ -60,9 +60,6 @@ voice-say render --stop                # quit playback
 
 ## Env vars
 
-The pre-2026-10-26 names (`SAY_MCP_DAEMON_URL`, `SAY_DEFAULT_BACKEND`, `SAY_DEFAULT_VOICE`,
-`SAY_STREAM_THRESHOLD`, `SAY_TIMEOUT`) are still read when the new one is unset.
-
 | Var | Default | Notes |
 |---|---|---|
 | `VOICE_SAY_DAEMON_URL` | `http://127.0.0.1:8890` | Where the daemon lives. |
@@ -71,6 +68,7 @@ The pre-2026-10-26 names (`SAY_MCP_DAEMON_URL`, `SAY_DEFAULT_BACKEND`, `SAY_DEFA
 | `VOICE_SAY_RENDER_FAST_BACKEND` | daemon's default backend | Backend `--fast` streams from. |
 | `VOICE_SAY_RENDER_STREAM_THRESHOLD` | `1200` | Text length (chars) above which `voice-say render` auto-uses the chunked longform endpoint; `--stream` forces it regardless. |
 | `VOICE_CTL_CUE` | `voice-ctl-cue` on PATH | Command `voice-ctl` runs with `click` or `error` for feedback sounds; skipped when absent. |
+| `VOICE_CTL_MEDIA_REMOTE` | `media-remote` next to `voice-ctl` or on PATH | Optional command `voice-ctl` hands a control to when no voice-say player is live, as `toggle`, `pause`, `skip-forward N` or `skip-backward N`. None ships with voice-say; without one the control reports `no playback`. |
 
 ## Exit codes
 

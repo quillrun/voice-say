@@ -131,20 +131,6 @@ def test_normalize_tag_matches_the_apps_sanitizer():
     assert normalize_tag("!!!") == ""
 
 
-def test_env_reads_the_new_name_then_the_old_one(monkeypatch):
-    """VOICE_SAY_<X> wins; SAY_MCP_<X> (SAY_MOCK_<X> for the mock knobs) is
-    still read when the new name is unset (renamed 2026-10-26, ADR-0010)."""
-    for name in ("VOICE_SAY_PORT", "SAY_MCP_PORT", "VOICE_SAY_MOCK_RTF", "SAY_MOCK_RTF"):
-        monkeypatch.delenv(name, raising=False)
-    assert config.env("VOICE_SAY_PORT") is None
-    monkeypatch.setenv("SAY_MCP_PORT", "9001")
-    assert config.env("VOICE_SAY_PORT") == "9001"
-    monkeypatch.setenv("VOICE_SAY_PORT", "9002")
-    assert config.env("VOICE_SAY_PORT") == "9002"
-    monkeypatch.setenv("SAY_MOCK_RTF", "0.5")
-    assert config.env("VOICE_SAY_MOCK_RTF") == "0.5"
-
-
 def test_a_relative_data_root_is_made_absolute(monkeypatch, tmp_path):
     """The daemon hands archive paths to clients in other directories, so a
     relative data_root counts from where it was written, never the daemon's cwd."""
@@ -152,8 +138,7 @@ def test_a_relative_data_root_is_made_absolute(monkeypatch, tmp_path):
     local.parent.mkdir()
     local.write_text('data_root = "./data"\n')
     monkeypatch.setenv("VOICE_SAY_CONFIG", str(local))
-    for name in ("VOICE_SAY_DATA_ROOT", "SAY_MCP_DATA_ROOT"):
-        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("VOICE_SAY_DATA_ROOT", raising=False)
     monkeypatch.setattr(config, "_FILE", config._load_files())
     monkeypatch.chdir(tmp_path)
     assert config._path("data_root", "VOICE_SAY_DATA_ROOT", None) == (local.parent / "data").resolve()
@@ -161,3 +146,12 @@ def test_a_relative_data_root_is_made_absolute(monkeypatch, tmp_path):
     assert config._path("data_root", "VOICE_SAY_DATA_ROOT", None) == (tmp_path / "rel").resolve()
     monkeypatch.setenv("VOICE_SAY_DATA_ROOT", "/abs/root")
     assert config._path("data_root", "VOICE_SAY_DATA_ROOT", None) == Path("/abs/root")
+
+
+def test_committed_example_config_stays_generic():
+    """A fresh clone runs on config.example.toml: the default backend is the
+    one the setup installs, with its generic voice and an open tag list."""
+    example = config._toml_load(config.DAEMON_DIR / "config.example.toml")
+    assert example["default_backend"] == "kokoro"
+    assert example["default_voice"] == "default"
+    assert example["allowed_tags"] == []

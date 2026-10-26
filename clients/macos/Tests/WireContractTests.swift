@@ -339,3 +339,20 @@ struct HistoryRowWireTests {
         #expect(e.durationS == 1.5)
     }
 }
+
+@Suite("Backend wire contract")
+struct BackendWireTests {
+    private func decode(_ json: String) throws -> Backend {
+        try JSONDecoder().decode(Backend.self, from: Data(json.utf8))
+    }
+
+    @Test("a backend's url from /config is where it is shown and probed; without one, 127.0.0.1:port")
+    func urlOrLoopback() throws {
+        let remote = try decode(##"{"id":"gpu","label":"GPU","port":443,"url":"https://tts.lan","default_voice":"v","voices":["v"],"supports_speed":true,"accent":"#888888"}"##)
+        #expect(remote.baseURL?.absoluteString == "https://tts.lan")
+        #expect(remote.hostPort == "tts.lan:443")
+        let local = try decode(##"{"id":"kokoro","label":"Kokoro","port":8000,"default_voice":"af_heart","voices":["af_heart"],"supports_speed":true,"accent":"#6ea8ff"}"##)
+        #expect(local.baseURL?.absoluteString == "http://127.0.0.1:8000")
+        #expect(local.hostPort == "127.0.0.1:8000")
+    }
+}

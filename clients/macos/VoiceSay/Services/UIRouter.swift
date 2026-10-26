@@ -1,7 +1,6 @@
-// UIRouter — centralizes the redesign's full-screen routing so deep views
-// (a CommitRow's "View transcript" button) can drive a window-level
-// overlay without prop-drilling bindings through every parent. Replaces
-// ContentView's local composeOpen / settingsOpen @State.
+// UIRouter — centralizes the full-screen routing so deep views (a
+// CommitRow's "View transcript" button) can drive a window-level overlay
+// without prop-drilling bindings through every parent.
 //
 // Scope: the mutually-exclusive full-screen surfaces (list / compose /
 // settings / transcript) plus the tag dialog (a centered scrim over the

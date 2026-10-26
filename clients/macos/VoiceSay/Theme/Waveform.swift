@@ -1,8 +1,7 @@
-// Waveform — deterministic synthetic peaks for the redesign's mini
-// waveforms (the voice-sample preview and the transcript LIVE-READ
-// player). Same seeded-PRNG idea as PlayerPanel.computePeaks, but
-// standalone so the new screens don't reach into PlayerPanel's private
-// state (and so the streaming session's PlayerPanel stays untouched).
+// Waveform — deterministic synthetic peaks for the mini waveforms (the
+// voice-sample preview and the transcript LIVE-READ player). Same
+// seeded-PRNG idea as PlayerPanel.computePeaks, but standalone so these
+// views don't reach into PlayerPanel's private state.
 
 import Foundation
 

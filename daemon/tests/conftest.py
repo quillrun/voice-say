@@ -1,6 +1,6 @@
 """Shared test fixtures.
 
-Post-vault-cut: the durable store is one SQLite db (`voice.db`); audio
+The durable store is one SQLite db (`voice.db`); audio
 stays as files under ARCHIVE_ROOT. `isolated_paths` redirects both into a
 per-test tmp dir so tests never touch the real archive / db.
 """

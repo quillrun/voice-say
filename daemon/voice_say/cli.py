@@ -201,7 +201,7 @@ def cmd_health(a: argparse.Namespace) -> int:
 
 def cmd_history(a: argparse.Namespace) -> int:
     # Soft-deleted rows are hidden client-side (the newest rows are often the
-    # ones just deleted), so fetch the daemon's maximum and cut afterwards.
+    # ones just deleted), so fetch a wide window (1000) and cut afterwards.
     fetch = a.limit if a.all else 1000
     body = _request("GET", "/history", params={"limit": fetch, "series": a.series})
     if not a.all:
@@ -243,23 +243,23 @@ def cmd_voices(a: argparse.Namespace) -> int:
         raise
     if a.json:
         print(json.dumps(body))
+    elif body.get("voices"):
+        print("\n".join(body["voices"]))
     else:
-        print("\n".join(body.get("voices", [])))
+        print("(no voices listed: the backend is down or does not list its voices)",
+              file=sys.stderr)
     return EXIT_OK
 
 
 def cmd_restart(a: argparse.Namespace) -> int:
     """Restart a backend's launchd service through the daemon (which runs
-    launchctl; a sandboxed session cannot). Refused while a render runs."""
+    launchctl, so a client without launchctl access works too). Refused while
+    a render runs."""
     try:
         body = _request("POST", f"/backends/{_seg(a.backend)}/restart", timeout=60)
     except DaemonError as exc:
-        if exc.status == 404 and isinstance(exc.body, dict):
+        if exc.status == 404:
             print(f"ERR: unknown backend {a.backend!r}", file=sys.stderr)
-            return EXIT_REFUSED
-        if exc.status == 404:          # no such route: the running daemon predates this command
-            print("ERR: the running daemon has no restart route (older than this CLI); restart it\n"
-                  "     (stop `make run` and start it again in the voice-say repo).", file=sys.stderr)
             return EXIT_REFUSED
         if exc.status == 409:
             print(f"ERR: {exc}", file=sys.stderr)

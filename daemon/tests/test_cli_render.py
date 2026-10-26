@@ -77,16 +77,17 @@ async def daemon(tmp_path):
     await runner.cleanup()
 
 
-async def _render(daemon, tmp_path, *args, url_var="VOICE_SAY_DAEMON_URL", cwd=None,
+async def _render(daemon, tmp_path, *args, cwd=None,
                   out=True, play=False, **extra_env) -> tuple[int, str, str]:
     # The caller's own daemon URL would outrank the one under test.
     env = {k: v for k, v in os.environ.items()
-           if not k.startswith("VOICE_SAY_RENDER_") and k not in ("VOICE_SAY_DAEMON_URL", "SAY_MCP_DAEMON_URL")}
-    env.update({url_var: daemon["url"], **extra_env})
+           if not k.startswith("VOICE_SAY_RENDER_")}
+    env.update({"VOICE_SAY_DAEMON_URL": daemon["url"], **extra_env})
     if play:
-        # Playing runs `voice-ctl stop`, which with no player falls back to
-        # media-remote in ~/.local/bin and would pause the machine's own audio.
+        # Playing runs `voice-ctl stop`, which with no player falls back to an
+        # optional media-remote command and would pause the machine's own audio.
         env["HOME"] = str(tmp_path)
+        env["VOICE_CTL_MEDIA_REMOTE"] = "voice-ctl-test-no-media-remote"
     proc = await asyncio.create_subprocess_exec(
         str(VOICE_SAY), "render", *([] if play else ["--no-play"]),
         *([f"--out={tmp_path / 'out.mp3'}"] if out else []),
@@ -133,7 +134,7 @@ async def test_a_daemon_on_another_machine_serves_the_audio(daemon, tmp_path):
     rc, _, err = await _render(daemon, tmp_path, "hello")
     assert rc == 0, err
     assert daemon["fetched"] == "T1"
-    assert (tmp_path / "out.mp3").read_bytes() == b"RIFFremote"
+    assert (tmp_path / "out.wav").read_bytes() == b"RIFFremote"
 
 
 async def test_a_module_in_the_working_directory_is_not_imported(daemon, tmp_path):
@@ -178,37 +179,28 @@ async def test_title_from_markdown_heading(daemon, tmp_path):
     assert json.loads(json.dumps(daemon["calls"][0][1]))["title"] == "Attention from Scratch"
 
 
-async def test_older_daemon_gets_the_overlay_by_post(tmp_path):
-    """A daemon that ignores title/series/episode on /render: the CLI sets
-    them with POST /overlays/{ts} instead."""
-    audio = tmp_path / "a.mp3"
-    audio.write_bytes(b"ID3")
-    posted: list = []
-
-    async def render(req):
-        return web.json_response({"ts": "T1", "archive_path": str(audio)})
-
-    async def overlay(req):
-        body = await req.json()
-        posted.append((req.match_info["ts"], body))
-        return web.json_response({"ts": "T1", **body})
-
-    app = web.Application()
-    app.router.add_post("/render", render)
-    app.router.add_post("/overlays/{ts}", overlay)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 0)
-    await site.start()
-    url = f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}"
-    try:
-        rc, out, err = await _render({"url": url}, tmp_path, "--title=Ep 3",
-                                  "--series=S", "--episode=3", "hi")
-    finally:
-        await runner.cleanup()
+async def test_out_takes_the_archive_extension_with_a_warning(daemon, tmp_path):
+    """The backend decides the format: an --out named for another one is saved
+    under the archive's extension, and the rename is said on stderr."""
+    wav = tmp_path / "b.wav"
+    wav.write_bytes(b"RIFF")
+    daemon["archive"] = str(wav)
+    rc, out, err = await _render(daemon, tmp_path, "--json", "hello")
     assert rc == 0, err
-    assert posted == [("T1", {"title": "Ep 3", "series": "S", "episode": 3})]
-    assert "titled: Ep 3" in out
+    assert json.loads(out)["out"] == str(tmp_path / "out.wav")
+    assert (tmp_path / "out.wav").read_bytes() == b"RIFF"
+    assert not (tmp_path / "out.mp3").exists()
+    assert "WARN: the audio is .wav" in err
+    rc, out, err = await _render(daemon, tmp_path, "--json", f"--out={tmp_path / 'plain'}",
+                                 "hello", out=False)
+    assert rc == 0, err
+    assert json.loads(out)["out"] == str(tmp_path / "plain.wav")
+
+
+async def test_flag_format_is_gone(daemon, tmp_path):
+    rc, _, err = await _render(daemon, tmp_path, "--format=mp3", "hello")
+    assert rc == 4 and "unknown flag" in err
+    assert daemon["calls"] == []
 
 
 LONG = "Words words words. " * 20   # 380 chars: over the 280 say threshold
@@ -245,12 +237,6 @@ async def test_known_tag_and_new_tag_render(daemon, tmp_path):
     assert rc == 0, err
     assert daemon["calls"][0][1]["tags"] == ["notes", "fresh"]
 
-
-
-async def test_old_daemon_url_name_still_works(daemon, tmp_path):
-    rc, out, err = await _render(daemon, tmp_path, "hello", url_var="SAY_MCP_DAEMON_URL")
-    assert rc == 0, err
-    assert daemon["calls"][0][0] == "/render"
 
 
 async def test_json_is_the_only_stdout(daemon, tmp_path):
@@ -322,7 +308,9 @@ def run_dir():
 async def _ctl(*args, tmpdir, path=None) -> tuple[int, str, str]:
     env = {k: v for k, v in os.environ.items() if k != "VOICESAY_APP_SOCKET"}
     env["TMPDIR"] = tmpdir
-    env["HOME"] = tmpdir     # keeps ~/.local/bin/media-remote (the no-player fallback) out of reach
+    # Keeps any media-remote (the optional no-player fallback) out of reach.
+    env["HOME"] = tmpdir
+    env["VOICE_CTL_MEDIA_REMOTE"] = "voice-ctl-test-no-media-remote"
     if path:
         env["PATH"] = path
     proc = await asyncio.create_subprocess_exec(

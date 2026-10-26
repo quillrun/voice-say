@@ -95,8 +95,8 @@ final class DaemonController {
             }
             // Poll /health up to ~20 s for the desired end state.
             // Bootstrap → python-up takes 3–13 s in practice (aiohttp +
-            // mutagen imports under the venv's interpreter, plus state
-            // hydration from voice-history.jsonl on cold start). Bootout
+            // mutagen imports under the venv's interpreter, plus opening
+            // the library database on cold start). Bootout
             // → no-bind is sub-second. The loop converges either way.
             let finalHealthy = await ProcessRun.pollState(until: expectUp, within: 20.0,
                                                           everyNs: 300_000_000) {
@@ -119,7 +119,7 @@ final class DaemonController {
     /// One-shot health probe used by `run` to confirm end state. Goes through
     /// PortProbe.httpOK — a fresh ephemeral session (not DaemonClient.shared's
     /// pooled session) so a stale connection on a down daemon doesn't bleed
-    /// in — while honoring the configured base URL, so a "say.mcp.base.url"
+    /// in — while honoring the configured base URL, so a `voicesay.daemonURL`
     /// override is respected here too.
     nonisolated private static func probeHealthy() async -> Bool {
         await PortProbe.httpOK(url: DaemonClient.shared.baseURL.appending(path: "/health"),

@@ -1,6 +1,6 @@
 // Mirrors the entry shape the voice-say daemon serves at /history and /search.
 // Optional fields stay optional — smoke-test entries lack archive_path, and
-// progress/overlay are absent until VoiceSay / bash / MCP write them. The
+// progress/overlay are absent until the app or the CLI writes them. The
 // daemon now serves the FULL transcript inline as `text`, so the app never
 // reads files off disk for transcripts.
 
@@ -9,8 +9,8 @@ import Foundation
 // MARK: - Decoding helper
 
 extension KeyedDecodingContainer {
-    /// Numeric field that may be encoded as Int or Double. Older JSONL
-    /// rows wrote `duration_s` as Int; the daemon now writes Double.
+    /// Numeric field that may be encoded as Int or Double (older rows
+    /// carry `duration_s` as Int; the daemon now writes Double).
     /// Returns 0 when missing or the wrong type.
     func decodeNumeric(forKey key: Key) -> Double {
         if let d = try? decode(Double.self, forKey: key) { return d }
@@ -212,7 +212,7 @@ extension VoiceEntry {
     /// live render card.
     static func firstSentence(of text: String) -> String? {
         // Strip inline [emotion]/<angle> markup (backends with emotion tags keep it
-        // in the stored text) and `voice-say render`'s <|prosody:pause|>-style tokens before picking
+        // in the stored text) and <|prosody:pause|>-style control tokens before picking
         // the first sentence, so the title isn't "[whispering] The secret is
         // out." EmotionMarkup constrains the angle arm so prose comparison
         // operators like "x < 5 and y > 3" survive.
@@ -265,8 +265,9 @@ extension VoiceEntry {
         return "(no title)"
     }
 
-    /// Best on-disk path; uses the canonical voice-archive root when the
-    /// recorded path is a stale host reference. The fallback recursive scan
+    /// Best on-disk path: the recorded path when it is readable, else a
+    /// search of the archive root by file name (the archive was moved or
+    /// reorganised since the row was written). The fallback recursive scan
     /// caches hits (one stat to re-check) and misses (no walk at all until
     /// the list reloads or `missRetryS` passes): view bodies call this
     /// several times per redraw, and a purged file would otherwise re-walk
@@ -327,8 +328,8 @@ extension VoiceEntry {
     }
 
     /// Prefer the duration reported by progress (real, set on first
-    /// playback) over the JSONL value (`0` for entries rendered before
-    /// the progress feature shipped).
+    /// playback) over the row's own value, which is `0` on rows that
+    /// have none.
     func bestDurationS() -> Double {
         if let p = progress, p.durationS > 0 { return p.durationS }
         return durationS

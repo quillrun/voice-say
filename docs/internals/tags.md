@@ -17,11 +17,12 @@ The default shipped configuration is open (`[]`). If you want a curated, closed 
 
 Every tag is normalized before it is stored or compared:
 
-1. **trim** surrounding whitespace,
-2. **lowercase**,
-3. **spaces → hyphens**.
+1. **lowercase**,
+2. **spaces, underscores, tabs and newlines → hyphens**,
+3. **only `a-z`, `0-9` and `-` kept** (everything else is dropped),
+4. **runs of hyphens collapsed** to one, and leading or trailing hyphens trimmed.
 
-So `"Daily Notes"`, `"daily notes"`, and `"daily-notes"` all collapse to the single canonical form `daily-notes`. Normalization is applied at `/render` and at overlay tag edits, so validation stays in lockstep.
+So `"Daily Notes"`, `"daily_notes"`, and `"daily-notes"` all collapse to the single canonical form `daily-notes`, and `"News!!"` becomes `news`. A tag that is empty after normalization is dropped. Normalization is applied at `/render` and at overlay tag edits, so validation stays in lockstep.
 
 ## `GET /tags`
 
@@ -57,7 +58,7 @@ Keeping these as mechanisms rather than reserved tag strings keeps the tag vocab
 Three tags are applied automatically by the system rather than supplied by a user. None can be hand-edited away; each is re-derived from the mechanism that owns it.
 
 - **`mock`** — the daemon appends `mock` to a render's tags whenever it is created with `mock=true`, so mock renders are trivially filtered and purged. A real, **server-side stored** tag (it lives in the `renders` row and appears in `GET /tags`).
-- **`draft`** — the daemon appends `draft` when a streaming render is stopped early and saved as a resumable save-and-stop draft, so it lands in the Drafts category. Also **server-side stored**; it is dropped from the continuation when an episode is resumed to completion.
+- **`draft`** — the daemon appends `draft` when a streaming render is stopped early and saved as a resumable save-and-stop draft; the macOS app lists these under **Rendering** as paused drafts. Also **server-side stored**; it is dropped from the continuation when an episode is resumed to completion.
 - **`completed`** — a **client-only virtual** tag. The macOS client derives it from the daemon's `progress.completed` field: once a render has been *played to the end*, `tagsFor()` appends `completed` (matching its `progress.completed`, i.e. playback completion — **not** render completion, which is `isComplete`). It is undeletable — guarded in `removeTag()` / `deleteTagEverywhere()` and re-appended after the removed-tag subtraction, so deleting it has no effect. Because it is never written to the store, it does **not** appear in the daemon's `GET /tags` response; it shows only in the client's local tag list and filters.
 
 ## Where tags appear

@@ -1,6 +1,6 @@
-// ComposeScreen — text + backend + voice + tags + render button. The native
-// equivalent of a `voice-say render` invocation. Calls Renderer which mirrors the
-// bash flow (TTS POST → archive → history log).
+// ComposeScreen — text + backend + voice + tags + render button. The app's
+// `voice-say render`: it enqueues a RenderJob, and RenderQueue sends it to the
+// daemon's /render_longform.
 
 import SwiftUI
 import AppKit
@@ -28,7 +28,7 @@ struct ComposeScreen: View {
     @AppStorage("composeDraftSeries") private var savedSeries = ""
     @AppStorage("composeDraftEpisode") private var savedEpisode = ""
     @State private var backendID: String = "kokoro"
-    @State private var voice: String = "af_alloy"
+    @State private var voice: String = "af_heart"
     /// Set once the user picks a backend or voice here: a late /config
     /// (the open's refresh, or the history load's) must not replace it.
     @State private var userPicked = false
@@ -90,7 +90,8 @@ struct ComposeScreen: View {
         .font(.system(.body, design: .monospaced))
         // Seed defaults once /config is available, and RE-seed if it lands
         // after this view appears — mirrors SettingsScreen's seedPickers wiring
-        // so Compose doesn't strand on the kokoro/af_alloy cold-start literals.
+        // so Compose doesn't strand on the kokoro/af_heart cold-start literals
+        // (the daemon's built-in default backend and voice).
         .task {
             await config.refresh()
             syncDefaultsFromConfig()
@@ -256,8 +257,8 @@ struct ComposeScreen: View {
     private func column(editorHeight: CGFloat?) -> some View {
         VStack(alignment: .leading, spacing: Spacing.lg) {
             textPanel(editorHeight: editorHeight)
-            // Side by side when they fit, else stacked (five backend chips
-            // alone nearly fill the column).
+            // Side by side when they fit, else stacked (a few backend chips
+            // alone can fill the column).
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: Spacing.lg) { voicePanel; tagsPanel }
                 VStack(alignment: .leading, spacing: Spacing.lg) { voicePanel; tagsPanel }
@@ -536,6 +537,13 @@ struct ComposeScreen: View {
 
 
     private func render() {
+        // No /config yet means no backend catalog to resolve against: say the
+        // daemon is down rather than "unknown backend". The text stays, and
+        // the catalog loads when the event stream reconnects.
+        guard config.loadedFromDaemon else {
+            status = .error("voice-say daemon isn't answering — \(DaemonController.startHint)")
+            return
+        }
         guard let backend = Backends.find(id: backendID) else {
             status = .error("unknown backend \(backendID)")
             return

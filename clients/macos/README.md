@@ -21,7 +21,17 @@ open build/VoiceSay.app
 bundle, regenerate the icon if `build-icon.py` changed, code-sign (a stable
 self-signed identity if present, else ad-hoc). `VOICE_SAY_DESKTOP_LINK=1`
 also links it on the Desktop; `VOICE_SAY_ICON=<png>` builds the icon from an
-image instead of drawing it. Build artifacts (`.build/`, `build/`, `*.app`) are gitignored.
+image instead of drawing it. `VOICE_SAY_SAMPLES=<dir>` bundles the
+`<voice>.mp3` clips in that directory as voice-picker previews; a voice
+without a clip shows no preview. Build artifacts (`.build/`, `build/`,
+`*.app`) are gitignored.
+
+The app talks to the daemon at `http://127.0.0.1:8890`. For a daemon on
+another port, set the address and reopen the app:
+
+```sh
+defaults write local.voicesay.VoiceSay voicesay.daemonURL http://127.0.0.1:<port>
+```
 
 ## Keyboard
 

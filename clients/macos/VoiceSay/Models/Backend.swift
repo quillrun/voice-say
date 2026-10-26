@@ -17,13 +17,28 @@ struct Backend: Identifiable, Hashable, Sendable, Decodable {
     /// How this backend's OS service is started/stopped. nil = not
     /// client-managed (the user brings it up themselves).
     let service: BackendService?
+    /// The server's base URL as the daemon reaches it (`http://host:port`);
+    /// a catalog entry may name another host. nil from a daemon that doesn't
+    /// send it, so the default keeps the memberwise init source-compatible.
+    var url: String? = nil
 
     // Daemon emits snake_case (default_voice, supports_speed); map here
     // so the rest of the codebase uses Swift naming.
     enum CodingKeys: String, CodingKey {
-        case id, label, port, voices, accent, service
+        case id, label, port, voices, accent, service, url
         case defaultVoice = "default_voice"
         case supportsSpeed = "supports_speed"
+    }
+
+    /// Where to probe this backend: the daemon's `url`, else loopback + port.
+    var baseURL: URL? {
+        url.flatMap { URL(string: $0) } ?? URL(string: "http://127.0.0.1:\(port)")
+    }
+
+    /// "host:port" for display. `port` is the daemon's resolved port, which
+    /// covers a `url` without one (80/443).
+    var hostPort: String {
+        "\(baseURL?.host() ?? "127.0.0.1"):\(baseURL?.port ?? port)"
     }
 
     /// `label` with a trailing " (local)" stripped, so backend chips / picker

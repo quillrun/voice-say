@@ -30,8 +30,7 @@ async def _parse_render_body(request: web.Request):
     """Shared body-validation prologue for /render and /render_longform.
 
     Returns either a `(body, backend, speed, tags, overlay)` tuple on success,
-    or a `web.Response` (the json_error envelope) on validation failure. The
-    response bytes are byte-identical to the previous inline validation —
+    or a `web.Response` (the json_error envelope) on validation failure —
     callers do `if isinstance(result, web.Response): return result`."""
     body = await parse_json(request)
 
@@ -159,7 +158,7 @@ async def render(request: web.Request) -> web.Response:
 
 
 async def render_longform(request: web.Request) -> web.Response:
-    """POST /render_longform — Tier-1 longform. Same body shape + the same
+    """POST /render_longform — chunked longform render. Same body shape + the same
     RenderError→status mapping as /render. Chunks the text, renders each
     chunk serially to WAV, concatenates gaplessly into ONE mp3, and writes
     exactly ONE archive file + ONE db row (see engine.render_longform)."""

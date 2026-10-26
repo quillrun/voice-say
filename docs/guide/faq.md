@@ -24,7 +24,7 @@ The **daemon** is the background service that does the actual text-to-speech. Th
 
 - The app usually offers a button to **start the daemon** — click it and wait a moment for the connection indicator to turn healthy.
 - If you started voice-say from a terminal, make sure you ran the start command (for example `make run`) and left that process running.
-- The daemon listens on `127.0.0.1:8890`. If another program is using that port, change the port in your local config (see [Configuration](../setup/configuration.md)) and restart.
+- The daemon listens on `127.0.0.1:8890`. If another program is using that port, change the port in your local config (see [Configuration](../setup/configuration.md)) and restart, then point the `voice-say` command line and the app at the new port ([A daemon on another port](../setup/configuration.md#a-daemon-on-another-port)).
 - Still stuck? Check the daemon's health endpoint in a browser: open `http://127.0.0.1:8890/health`. A healthy response means the daemon is up and the app just needs reconnecting (restart the app).
 
 > Note: the speech backends are separate services outside this repo. The default, `kokoro`, is mlx-audio's server on `127.0.0.1:8000`. See [Backends](../setup/backends.md).
@@ -59,7 +59,7 @@ Every render is classified by length at the time it is made. A short utterance �
 
 ### How do I add a new tag?
 
-The daemon uses an **open tag vocabulary** by default — it accepts any tag. Tags are normalized (trim, lowercase, spaces to hyphens), so `"My Notes"` and `"my-notes"` are the same tag. The list of tags in use is always visible via `voice-say tags` or `GET /tags`.
+The daemon uses an **open tag vocabulary** by default — it accepts any tag. Tags are normalized (lowercase; spaces and underscores to hyphens; only `a-z0-9-` kept), so `"My Notes"` and `"my-notes"` are the same tag. The list of tags in use is always visible via `voice-say tags` or `GET /tags`.
 
 The `voice-say` CLI is stricter on purpose, so a typo does not become a new tag: `voice-say render --tag` and `voice-say set --tag` take only tags already in use (see `voice-say tags`). To coin a new one, use `voice-say render --new-tag=<name>` or `voice-say set <ts> --tag <name> --allow-new-tags`; after that, `--tag=<name>` works.
 
@@ -78,4 +78,4 @@ The default backend is `kokoro` with voice `af_heart`; `voice-say voices kokoro`
 
 - Settings reference: [Configuration](../setup/configuration.md)
 - How the parts connect: [Architecture](../internals/architecture.md)
-- What is coming next: [Roadmap](../roadmap.md)
+- A bug or an idea: [open an issue](https://github.com/quillrun/voice-say/issues)

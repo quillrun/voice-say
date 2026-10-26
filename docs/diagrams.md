@@ -5,20 +5,19 @@ pipeline, long-form / streaming render, data lifecycle, event flow,
 configuration, tag policy, and backend topology of voice-say — a local-only
 text-to-speech system.
 
-All diagrams use generic labels. The daemon, the config layer, the backend
-catalog (one `kokoro` entry on mlx-audio's server, a separate service outside
-this repo), the consolidated **SQLite store** (`voice.db`, WAL) with FTS5
-transcript search, and one-command daemon setup are all **shipped**. The client
-surfaces are the **CLI** (`voice-say`, `render` included) and the **macOS app**.
+The backend catalog has one `kokoro` entry on mlx-audio's server, a separate
+service outside this repo; the state lives in one **SQLite store** (`voice.db`,
+WAL) with FTS5 transcript search. The clients are the **`voice-say` command
+line** (`render` included) and the **macOS app**.
 
 ---
 
 ## 1. System Architecture
 
-Thin client surfaces (the CLIs and the macOS app) all
+Thin clients (the `voice-say` command line and the macOS app) all
 funnel through one local aiohttp daemon on `127.0.0.1:8890`, which drives the
 pluggable TTS backends and broadcasts render/progress/overlay events back to
-every client over Server-Sent Events.
+the macOS app over Server-Sent Events.
 
 ```mermaid
 flowchart TD
@@ -28,7 +27,7 @@ flowchart TD
     end
 
     subgraph Daemon["aiohttp daemon — 127.0.0.1:8890"]
-        API["HTTP routes\n/render /history /search /events /config\n/tags /progress /overlays /audio /health"]
+        API["HTTP routes\n/render /render_longform /episode/* /history /search\n/events /config /tags /stats /progress /overlays\n/audio /align /health /backends /voices"]
         PIPE["render pipeline (engine.render)"]
         SSE["SSE broadcaster"]
     end
@@ -44,8 +43,7 @@ flowchart TD
     PIPE -->|POST /v1/audio/speech| KOK
     PIPE -->|POST /v1/audio/speech| OTH
     PIPE --> SSE
-    SSE -->|render / progress / overlay events| CLI
-    SSE --> APP
+    SSE -->|render / progress / overlay events| APP
 ```
 
 ---
@@ -62,7 +60,7 @@ returns the entry dict.
 sequenceDiagram
     participant C as Caller (CLI / app)
     participant D as Daemon (:8890)
-    participant B as Backend (:889x)
+    participant B as Backend (e.g. :8000)
     participant FS as Filesystem
     participant DB as SQLite store (voice.db)
     participant H as State cache / SSE
@@ -92,8 +90,8 @@ format (`.mp3` or `.wav`); the row in `renders` carries the **full transcript**
 plus all metadata (`kind`, `archive_path`, `format`, tags, duration, ...). State
 lives entirely in `voice.db` (WAL mode): the append-only `renders` table, the
 mutable `progress` and `overlays` tables, and the `renders_fts` FTS5 virtual
-table over the transcript. No vault sidecars, no JSONL files, no manual locking
-or compaction.
+table over the transcript. SQLite handles the locking; there are no other
+state files.
 
 ```mermaid
 flowchart LR
@@ -158,7 +156,7 @@ flowchart TD
     ENV["environment variables\n(highest precedence)"] --> RESOLVE["effective config\n(read at boot, served via GET /config)"]
     LOCAL["config.local.toml\n(local override, gitignored)"] --> RESOLVE
     EXAMPLE["config.example.toml\n(committed generic defaults)"] --> RESOLVE
-    RESOLVE --> KEYS["data_root (committed default ./data;\n~/.local/share/voice-say is the in-code fallback),\ndb_path (&lt;data_root&gt;/voice.db),\ndefault_backend=kokoro,\ndefault_voice=default,\nsay_threshold_chars=280,\nallowed_tags=[] (open), daemon_port=8890"]
+    RESOLVE --> KEYS["data_root (committed default ./data;\n~/.local/share/voice-say is the in-code fallback),\nvoice.db at &lt;data_root&gt;/voice.db,\ndefault_backend=kokoro,\ndefault_voice=default,\nsay_threshold_chars=280,\nallowed_tags=[] (open), daemon_port=8890"]
 ```
 
 ---
@@ -172,7 +170,7 @@ the distinct tags in use.
 ```mermaid
 flowchart TD
     IN["incoming tag (raw string)"]
-    IN --> NORM["normalize: trim, lowercase, spaces to hyphens"]
+    IN --> NORM["normalize: lowercase, spaces/underscores to hyphens,\nkeep a-z0-9-, collapse hyphens"]
     NORM --> EMPTY{"empty after normalize?"}
     EMPTY -->|yes| DROP["discard"]
     EMPTY -->|no| MODE{"allowed_tags set\nin config?"}
@@ -192,8 +190,8 @@ All TTS backends run locally and speak the OpenAI-compatible
 the committed default is Kokoro on mlx-audio's server (`:8000`); any other
 server with that contract is one catalog entry (`url` + `model`). A backend
 that understands inline emotion tags says so with `supports_emotion_tags`.
-`voice-say render --fast` skips the daemon and streams from a backend directly
-(`stream: true`).
+`voice-say render --fast` asks the daemon only for the backend's address, then
+streams from the backend directly (`stream: true`), with nothing archived.
 
 ```mermaid
 flowchart LR
@@ -236,8 +234,8 @@ flowchart TD
 
 `POST /render_longform` is a first-class path for text too long for a single
 render: it chunks the input (≤ a **backend-specific** char ceiling — default
-**1200** chars/chunk; a backend that stitches long input itself can set e.g.
-**12500** for whole-module POSTs; capped at **40** chunks), renders chunks serially, then
+**1200** chars/chunk; a backend that keeps continuity across long input can set
+a larger `longform_chunk_max`; capped at **40** chunks), renders chunks serially, then
 **gapless-concats** them into **one** audio file plus **one** `renders` row —
 so a long episode lands as a single archive artefact, not N fragments. Before
 the concat, each chunk's leading + trailing silence is trimmed to a uniform
@@ -267,7 +265,7 @@ draft (overlay `deleted=true`) — reusing the **same** `episode_start` /
 sequenceDiagram
     participant C as Caller (CLI / app)
     participant D as Daemon (:8890)
-    participant B as Backend (:889x)
+    participant B as Backend (e.g. :8000)
     participant FS as Filesystem
     participant DB as SQLite store (voice.db)
     participant S as SSE consumers

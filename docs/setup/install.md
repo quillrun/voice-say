@@ -3,9 +3,8 @@
 Get voice-say running locally: prerequisites, the plug-and-play `make` flow, and a health check.
 
 voice-say is a **local-only** text-to-speech system. There are no API keys and no
-cloud calls. A single Python daemon owns the render pipeline; thin clients (a bash
-CLIs, and a macOS app) talk to it over
-loopback HTTP at `127.0.0.1:8890`.
+cloud calls. A single Python daemon owns the render pipeline; thin clients (the `voice-say`
+command line and a macOS app) talk to it over loopback HTTP at `127.0.0.1:8890`.
 
 ## Prerequisites
 
@@ -61,6 +60,27 @@ curl -s http://127.0.0.1:8890/health
 
 To remove it: `launchctl bootout gui/$(id -u)/local.voicesay.daemon`, then delete the plist.
 The speech backend is not covered by this; start it as before.
+
+## Optional: move old audio aside (retention job)
+
+`voice_say.retention` moves audio that was played to the end and not played again
+for 180 days into `voice-archive/.cold/` (starred and bookmarked entries stay). The
+row and transcript stay in the library, and `GET /audio/{ts}` still serves a moved
+file. Try it first with `.venv/bin/python -m voice_say.retention --dry-run`
+from `daemon/`. To run it monthly (04:00 on the 1st), install its LaunchAgent the
+same way:
+
+```sh
+sed -e "s|__PYTHON__|$PWD/daemon/.venv/bin/python|g" \
+    -e "s|__WORKDIR__|$PWD/daemon|g" \
+    -e "s|__LOGDIR__|$HOME/Library/Logs|g" \
+    daemon/launchd/local.voicesay.retention.plist.example \
+  > ~/Library/LaunchAgents/local.voicesay.retention.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.voicesay.retention.plist
+```
+
+`--cold-days N` changes the age (`0` turns the job off); `--purge` deletes old audio
+instead of moving it.
 
 ## Verify
 

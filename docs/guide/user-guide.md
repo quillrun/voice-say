@@ -17,7 +17,7 @@ Start the daemon with `make run` (see the [install steps](../setup/install.md)) 
 
 Open the voice-say app the way you open any Mac app. When it starts, it connects to the daemon and loads your render history. If this is a brand-new install, the history will be empty — that is normal.
 
-> You build the app from source (`make app` in the project folder); it is signed with a self-signed certificate (not notarized). Because it is built locally rather than downloaded, macOS lets it run without a Gatekeeper prompt, and the stable signature means any permission you grant (microphone, etc.) sticks across rebuilds. No Apple account is needed. (See [distribution.md](../setup/distribution.md).)
+> You build the app from source (`make app` in the project folder); it is signed with a self-signed certificate (not notarized). Because it is built locally rather than downloaded, macOS lets it run without a Gatekeeper prompt, and the stable signature means a permission you grant (access to the Desktop or Documents folder, when your audio archive lives there) sticks across rebuilds. No Apple account is needed. (See [distribution.md](../setup/distribution.md).)
 
 ## Making your first render
 
@@ -57,7 +57,7 @@ Click the **star** on any entry to mark it a favourite. Starring is just a quick
 
 **Tags** are short labels that help you group and find renders (for example, a project name or a category). To tag an entry, open it and type or select a tag.
 
-voice-say uses an **open tag vocabulary** by default — you can use any label you like. Tags are normalized (lowercase, spaces become hyphens) so `"Daily Notes"` and `"daily-notes"` are the same tag. `GET /tags` always shows the distinct tags in use across your history. (The command-line `voice-say` takes only tags already in use unless you coin one on purpose with `--new-tag`; see the [FAQ](faq.md#how-do-i-add-a-new-tag).)
+voice-say uses an **open tag vocabulary** by default — you can use any label you like. Tags are normalized (lowercase; spaces and underscores become hyphens; anything outside `a-z0-9-` is dropped) so `"Daily Notes"` and `"daily-notes"` are the same tag. `GET /tags` always shows the distinct tags in use across your history. (The command-line `voice-say` takes only tags already in use unless you coin one on purpose with `--new-tag`; see the [FAQ](faq.md#how-do-i-add-a-new-tag).)
 
 > If the owner of this install has set a closed `allowed_tags` list in the config, only those tags are accepted. Open an entry and the available tags will reflect what is allowed.
 
@@ -93,18 +93,18 @@ render has reached. You can rename a render's title inline from the expanded car
 
 ## Watching a stream render
 
-While a **stream (play while rendering)** render is in flight, a live status line tells you what is happening. Before the first chunk arrives there is nothing to play yet, so the line cycles through what the daemon is actually doing — **Preparing…**, then **Warming up the voice…**, then **Rendering the first chunk…**. Once chunks start landing it switches to **Rendering chunk K of N…** and counts up. When every predicted chunk is in, it reads **Finishing up…** while the daemon stitches and encodes the final file, and **Finishing current chunk…** if you have asked it to stop early. The same status line is shown on the streaming card and in the transcript header, so they always agree.
+While a **stream (play while rendering)** render is in flight, a live status line tells you what is happening. Before the first chunk arrives there is nothing to play yet, so the line steps through **Preparing…**, **Warming up the voice…** and **Rendering the first chunk…** every few seconds. Once chunks start landing it switches to **Rendering chunk K of N…** and counts up. When every predicted chunk is in, it reads **Finishing up…** while the daemon stitches and encodes the final file, and **Finishing current chunk…** (or **Stopping…** after Stop Now) if you have asked it to stop early. The same status line is shown on the streaming card and in the transcript header, so they always agree.
 
 ## Stopping a render early and continuing later
 
-You do not have to wait for a long stream render to finish. The persistent global control strip was removed; the stop controls now live as StreamingRenderControls (Pause / Stop Now / Delete) on the streaming card and in the reader's control bar. While it is in flight you get:
+You do not have to wait for a long stream render to finish. The stop controls (Pause, Stop Now, Delete) sit on the streaming card and in the reader's control bar. While a render is in flight you get:
 
 - **Pause** — finishes the chunk currently rendering, then keeps everything produced so far as a resumable draft. While that chunk finishes, the status reads **Finishing current chunk…** and a **Stop Now** button appears: press it to drop even that in-flight chunk and finalize immediately, keeping the chunks already done. The partial render lands in the **Rendering** bucket (as a paused draft) either way.
 - **Delete** — stops and throws the whole render away, keeping nothing.
 
 A saved Draft is a normal entry you can play and read like any other, plus it has a **Continue render** button. Press it and voice-say renders only the remaining text and merges it back into a single complete render — there is no seam to manage and you end up with one entry, as if it had rendered straight through.
 
-> The built-in categories are **History**, **New**, **Rendering**, and **Says**. There is no separate Drafts category anymore — a Save Progress (paused/save-and-stop) draft lands in **Rendering** (the live work-in-progress bucket: active + queued + paused drafts) until you continue it.
+> The built-in categories are **History**, **New**, **Rendering**, and **Says**. A paused draft stays in **Rendering** (everything in progress: active, queued and paused renders) until you continue it.
 
 ## Where to go next
 

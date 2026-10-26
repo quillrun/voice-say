@@ -64,7 +64,7 @@ struct SettingsServicesPanel: View {
             // service descriptor. Empty only before /config returns.
             ForEach(cfg.backends) { backendRow($0) }
             if cfg.backends.isEmpty {
-                Text("waiting for daemon /config…")
+                Text(probe.daemon == .down ? "daemon not reachable" : "loading backends…")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(Tokens.ultraDim)
                     .padding(.horizontal, Spacing.sm)
@@ -106,7 +106,7 @@ struct SettingsServicesPanel: View {
     /// tell which of them is actually serving), so we say so rather than
     /// imply both processes are independently up.
     private func portPeers(_ backend: Backend) -> [Backend] {
-        cfg.backends.filter { $0.id != backend.id && $0.port == backend.port }
+        cfg.backends.filter { $0.id != backend.id && $0.hostPort == backend.hostPort }
     }
 
     private func backendRow(_ backend: Backend) -> some View {
@@ -121,9 +121,9 @@ struct SettingsServicesPanel: View {
         }()
         let peers = portPeers(backend)
         let subtitle: String = {
-            let base = "127.0.0.1:\(backend.port)  ·  \(mechanism)"
+            let base = "\(backend.hostPort)  ·  \(mechanism)"
             guard !peers.isEmpty else { return base }
-            return base + "  ·  shares :\(backend.port) w/ " + peers.map(\.id).joined(separator: ", ")
+            return base + "  ·  shares it w/ " + peers.map(\.id).joined(separator: ", ")
         }()
         let act = backendCtl.action(for: backend.id)
         return VStack(spacing: 0) {

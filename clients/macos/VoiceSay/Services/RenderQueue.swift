@@ -1,8 +1,8 @@
 // RenderQueue — an ordered list of upcoming renders, drained one at a time.
 //
 // Why client-side: the daemon's /render_longform (and /episode/resume) POSTs
-// stay open for the WHOLE render (timeout 600) and return only on
-// completion/cancel. So awaiting one IS the "current render finished" signal —
+// stay open for the WHOLE render (up to DaemonClient.longestRenderS) and
+// return only on completion/cancel. So awaiting one IS the "current render finished" signal —
 // a serial pump that does `await renderer.render(head)` per job gives
 // "don't start the next until the current is fully rendered" for free, with no
 // daemon changes, and guarantees exactly one episode is ever in flight (so

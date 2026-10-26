@@ -16,9 +16,23 @@ Every backend answers the OpenAI-compatible text-to-speech endpoint:
 POST /v1/audio/speech   {"model": "...", "input": "...", "voice": "...", "response_format": "wav"}
 ```
 
-The daemon sends the text, model, voice and format; the backend returns audio bytes.
-Optionally it also lists its voices at `GET /v1/audio/voices?model=...`
-(`{"data": [{"id": "af_heart"}, …]}`), which mlx-audio's server does.
+The daemon sends the text, model, voice and format; the backend returns audio bytes:
+
+```jsonc
+POST <backend>/v1/audio/speech
+{
+  "model": "tts-1",
+  "input": "the text to speak",
+  "voice": "voice-id",           // optional: left out when the voice is "default"
+  "response_format": "wav",
+  "speed": 1.2                    // optional: sent only when supports_speed=true and the speed is not 1.0
+}
+→ HTTP 200, body = audio bytes
+```
+
+Optionally it also lists its voices at `GET /v1/audio/voices?model=...`, which
+mlx-audio's server does. The daemon reads either `{"data": [{"id": "af_heart"}, …]}`
+or a bare list of `{"id": …}` objects.
 
 ```mermaid
 flowchart LR
@@ -72,7 +86,7 @@ The other fields are optional:
 
 | Field | Default | Meaning |
 |---|---|---|
-| `url` | — | Base URL of the server (`http://host:port`; a trailing `/v1` is dropped). Older entries may give `host` + `port` instead. |
+| `url` | — | Base URL of the server (`http://host:port`; a trailing `/v1` is dropped). An entry may give `host` + `port` instead. |
 | `model` | `tts-1` | Sent as the OpenAI `model` field, so one server can serve several models. |
 | `voices` | asked from the server | The voice list for pickers. Leave it out and the daemon asks `GET /v1/audio/voices?model=`; give `[]` for a server that has no list. Not an allowlist: any voice passes through. |
 | `default_voice` | `default` | Voice when the caller names none; `default` sends no voice field. |
@@ -82,7 +96,7 @@ The other fields are optional:
 | `supports_emotion_tags` | `false` | Keep inline `[emotion]` / `<|…|>` tags; otherwise the daemon strips them. |
 | `timeout_s` | `600` | Per-request timeout. |
 | `longform_chunk_max` | `0` | Characters per request for long text; `0` = the global ~1200. A backend that carries continuity across its own seams sets it larger. |
-| `service` | none | `{"kind": "launchd", "label": "..."}` lets the app start/stop it and `voice-say restart` restart it. |
+| `service` | none | `{"kind": "launchd", "label": "..."}` lets the app start/stop it and `voice-say restart` restart it. The LaunchAgent plist must be at `~/Library/LaunchAgents/<label>.plist`: the app's Start runs `launchctl bootstrap gui/$(id -u) <plist>`, and refuses while the file is absent. |
 | `accent` | grey | Hex colour in the app. |
 
 `longform_max_chunks` (the cap on the *number* of chunks per render, default 40) is a
@@ -112,41 +126,20 @@ This means tag-bearing input sent to a non-expressive backend is always safe: th
 bracketed cues are removed and only clean spoken text is rendered. Sent to a backend with
 `supports_emotion_tags = true`, the cues are passed through to the model.
 
-### Private voice overlay (e.g. a cloned voice)
+### A catalog that stays on your machine
 
-The public catalog ships only generic, redistributable entries. To use a
-**private cloned voice** (a personal voice clone you do not want to publish),
-keep it out of git entirely and inject it at runtime via the same override:
+A backend you do not want in the repo (a voice you trained yourself, a server on
+another machine) goes in a catalog file outside git:
 
-1. Stand up your cloned-voice backend on its port.
-2. Write a `backends.local.json` that remaps the relevant backend's `voices`
-   (and `default_voice`) to include your clone, e.g. `"voices": ["my_clone", …]`.
-   This file matches the gitignore (`backends.local.json`, `*.private.json`) so
-   it is never committed.
-3. Point the daemon at it: `VOICE_SAY_BACKENDS_CONFIG=…/backends.local.json` (set
-   it in the daemon's LaunchAgent `EnvironmentVariables`, or your shell).
+1. Write `daemon/backends.local.json`: the `kokoro` entry shown under
+   [Adding a backend](#adding-a-backend) plus your own, with its `voices` and
+   `default_voice` if the server does not list them. The `*.local.*` pattern in
+   `.gitignore` keeps it out of commits.
+2. Point the daemon at it: `VOICE_SAY_BACKENDS_CONFIG=/path/to/backends.local.json`
+   (in the daemon's LaunchAgent `EnvironmentVariables`, or your shell).
 
-The clone now appears in the CLI and macOS-app voice pickers on your
-machine only. Nothing about it (model files, voice ids, deployment host) lives
-in the tracked core. Do **not** add private voices to `config.py`
-`DEFAULT_BACKENDS`.
-
-The backend protocol is OpenAI's `/v1/audio/speech` shape:
-
-```jsonc
-POST <backend>/v1/audio/speech
-{
-  "model": "tts-1",
-  "input": "the text to speak",
-  "voice": "voice-id",           // optional — daemon omits when "default"
-  "response_format": "wav",
-  "speed": 1.0                    // optional, only if supports_speed=true
-}
-→ HTTP 200, body = audio bytes
-```
-
-Plus a `GET /v1/audio/voices` endpoint returning a JSON array or
-`{voices: [...]}` listing available voice ids.
+The entry then appears in the CLI and the macOS app's voice pickers on your machine
+only.
 
 ## Inspecting backends at runtime
 
@@ -158,10 +151,13 @@ curl 'http://127.0.0.1:8890/health?deep=1'   # deep probe incl. backend reachabi
 
 ## Performance notes
 
-- Render concurrency: a **per-backend render gate** (`engine._gated()`) serializes
-  renders to the *same* backend (max 1 per gate key) while letting renders to
-  *different* backends run concurrently — two requests to one backend queue;
-  requests to two distinct backends proceed in parallel.
+- Render concurrency: one backend request runs at a time per **gate key**
+  (`engine._concurrency_key`, `engine._RenderGate`). Every backend on this machine
+  (`127.0.0.1`, `localhost`, `::1`, `0.0.0.0`) shares one key, so two local models are
+  never loaded and running at once; a backend on another host gets its own key and
+  runs in parallel with the local ones. One longform render runs at a time across
+  all backends, and it takes the gate per chunk, so a short render can slip in
+  between two chunks.
 - Per-backend timeout: configurable per entry in the catalog (`timeout_s`). The
   default is 600 s — raise it for a slow model or long chunks.
 

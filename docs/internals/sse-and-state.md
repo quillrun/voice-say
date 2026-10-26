@@ -139,13 +139,16 @@ differ in payload, not in shape:
 
 `POST /episode/{id}/force_finalize` is `finalize`'s impatient sibling: it keeps the
 completed chunks as the `"draft"` row but cancels and drops the in-flight chunk's
-synth instead of awaiting it, so a long final chunk can't strand a client on the
-"wrapping up" state. The render's in-flight-chunk `CancelledError` handler tells a
+synth instead of awaiting it, so a long final chunk can't keep a client waiting on
+"Finishing current chunk". The render's in-flight-chunk `CancelledError` handler tells a
 force-finalize (keep what's done) apart from a plain cancel (discard everything) via
 the registry's `force` flag; with no chunk completed yet it falls back to a cancel.
 
-Optionally, the SSE drives the client's status phases: *Preparing →
-Rendering chunk K of N → Finishing up → Wrapping up*.
+The macOS app derives its status line from the `chunk_ready` count and the
+predicted total: *Preparing → Warming up the voice → Rendering the first chunk*
+(these three advance on a timer until the first chunk lands) *→ Rendering chunk K
+of N → Finishing up*, or *Finishing current chunk* / *Stopping* after a stop
+request.
 
 ## Last-Event-ID reconnect
 
@@ -202,8 +205,8 @@ guarantees the slow consumer is released rather than parked.
 
 ## `POST /reload` escape hatch
 
-If an external process writes to `voice.db` out-of-band (e.g. a chunked-render
-queue or a manual edit), `POST /reload` re-hydrates the cache from the database
+If an external process writes to `voice.db` out-of-band (an import script,
+a manual edit), `POST /reload` re-hydrates the cache from the database
 — clearing `history` so rows deleted from the store don't linger — and
 broadcasts a `reloaded` event so subscribers can refresh without a daemon
 restart.

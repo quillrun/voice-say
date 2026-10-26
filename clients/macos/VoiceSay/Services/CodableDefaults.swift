@@ -28,7 +28,7 @@ enum DefaultsKeys {
     /// values for zero functional gain, so these keep their original names.
     static let playbackRate = "playbackRate"
     static let liveReadFollow = "transcriptLiveReadFollow"
-    /// External contract with the voice-say CLI (base-URL override for
-    /// the daemon) — shared across tools, never rename.
-    static let baseURLOverride = "say.mcp.base.url"
+    /// Daemon base-URL override for a daemon not on 127.0.0.1:8890, set with
+    /// `defaults write local.voicesay.VoiceSay voicesay.daemonURL <url>`.
+    static let baseURLOverride = "voicesay.daemonURL"
 }

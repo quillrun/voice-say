@@ -3,8 +3,7 @@
 // A value type so the queue can freely copy + reorder it. The queue's serial
 // pump turns each job into exactly one daemon render: `.fresh` text →
 // POST /render_longform (stream mode), `.resume` → POST /episode/resume.
-// Each job carries its OWN backend + voice, so a queue can mix models
-// (qwen3 then kokoro then …) — the "swap between models" requirement.
+// Each job carries its OWN backend + voice, so one queue can mix models.
 
 import Foundation
 

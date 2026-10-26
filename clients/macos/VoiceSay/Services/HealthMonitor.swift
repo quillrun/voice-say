@@ -21,8 +21,8 @@ final class HealthMonitor {
     var daemon: State = .unknown
     var daemonVersion: String? = nil
     /// Backend up/down keyed by backend id — driven by the daemon catalog
-    /// rather than a fixed kokoro/qwen3 set, so overlay-added backends
-    /// and mlx-swift surface automatically.
+    /// rather than a fixed set, so every backend the catalog names
+    /// surfaces automatically.
     var backends: [String: State] = [:]
     /// The header pill's cheap signal. Optimistic start (true) so the pill
     /// isn't red for the instant before the first probe lands.
@@ -67,7 +67,7 @@ final class HealthMonitor {
         // Probe all backend ports in parallel, collect into a dict.
         let probed = await withTaskGroup(of: (String, State).self) { group in
             for b in catalog {
-                group.addTask { (b.id, await Self.probeBackend(port: b.port)) }
+                group.addTask { (b.id, await Self.probeBackend(url: b.baseURL)) }
             }
             var out: [String: State] = [:]
             for await (id, state) in group { out[id] = state }
@@ -94,7 +94,7 @@ final class HealthMonitor {
     /// `PortProbe` — "up" = any HTTP response at root (backends answer 200/404
     /// either way). Static + nonisolated so the concurrent task group can call
     /// it off the main actor.
-    nonisolated static func probeBackend(port: Int) async -> State {
-        await PortProbe.answers(port: port, timeout: 2.0) ? .up : .down
+    nonisolated static func probeBackend(url: URL?) async -> State {
+        await PortProbe.answers(url: url, timeout: 2.0) ? .up : .down
     }
 }

@@ -259,7 +259,7 @@ async def test_reload_broadcasts_reloaded_event(isolated_paths):
 
 def test_tags_in_use_matches_the_app_formula():
     """Union of render + overlay tags, minus removed_tags, live rows only —
-    the vocabulary say/voice-say check tags against (bug 2026-06-02)."""
+    the vocabulary voice-say checks tags against."""
     s = State()
     s.history = {
         "a": {"ts": "a", "tags": ["applied", "Daily-Notes-v6"]},

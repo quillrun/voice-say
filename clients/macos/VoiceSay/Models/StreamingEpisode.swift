@@ -37,11 +37,11 @@ final class StreamingEpisode: Identifiable {
     /// The play intent captured at episode_start. `episode_complete` finalizes
     /// against THIS — not the live `HistoryStore.pendingPlayIntent`, which the
     /// render-queue pump may have already advanced to the next job by the time
-    /// completion is processed (the S6 race: a play-while-render episode could
-    /// otherwise be stopped, or a silent batch episode played).
+    /// completion is processed (a play-while-render episode could otherwise
+    /// be stopped, or a silent batch episode played).
     let playIntent: HistoryStore.StreamPlayIntent
 
-    /// Started by another client (an agent over MCP, the CLI): shown with its
+    /// Started by another client (the CLI, a script on the HTTP API): shown with its
     /// progress under Rendering, but never armed in the player — it must not
     /// stop or replace what's playing. It plays from its row once it lands.
     let isForeign: Bool

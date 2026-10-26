@@ -38,7 +38,7 @@ extension HistoryStore {
         let server = e.tags ?? []
         let user = clientTags[key] ?? []
         // Suppressed (deleted) tags — subtracted so "delete tag" hides even
-        // server/render-time tags the JSONL can't rewrite.
+        // server/render-time tags an overlay can't rewrite.
         let removed = Set(clientRemovedTags[key] ?? e.overlay?.removedTags ?? [])
         // Union preserving server order first, then user-added; minus removed.
         var seen = Set<String>()

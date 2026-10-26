@@ -6,11 +6,11 @@
 // Kokoro-FastAPI off Apple silicon), driven via `docker start/stop`.
 // Which mechanism applies is read from the daemon-reported
 // `Backend.service` descriptor (kind: "launchd" | "docker" | "none") rather
-// than hardcoded here, so a private VOICE_SAY_BACKENDS_CONFIG overlay can
-// remap labels without an app rebuild.
+// than hardcoded here, so a catalog set with VOICE_SAY_BACKENDS_CONFIG can
+// name its own labels without an app rebuild.
 //
-// Success is judged by the *observed end state* — we poll the backend's TCP
-// port after the command — not by the tool's exit code, which is noisy
+// Success is judged by the *observed end state* — we poll the backend's URL
+// after the command — not by the tool's exit code, which is noisy
 // across launchctl/docker/OS versions (same discipline as DaemonController).
 //
 // One controller instance backs the whole Settings list; per-backend action
@@ -53,7 +53,7 @@ final class BackendController {
             return
         }
         let id = backend.id
-        let port = backend.port
+        let url = backend.baseURL
         let verb = start ? "start" : "stop"
         actions[id] = .running
 
@@ -73,7 +73,7 @@ final class BackendController {
             // near-instant. Poll up to ~20 s for start, ~6 s for stop.
             let finalUp = await ProcessRun.pollState(until: start, within: start ? 20.0 : 6.0,
                                                      everyNs: 400_000_000) {
-                await Self.probePort(port)
+                await Self.probe(url)
             }
             guard let self else { return }
             await MainActor.run {
@@ -96,7 +96,7 @@ final class BackendController {
         let args: [String]
         if start {
             guard let plist, FileManager.default.fileExists(atPath: plist) else {
-                return .fail("plist not installed at \(plist ?? "~/Library/LaunchAgents/\(label).plist") — run the bootstrap script first")
+                return .fail("no LaunchAgent at \(plist ?? "~/Library/LaunchAgents/\(label).plist"): install this backend's plist there first (`service` in docs/setup/backends.md)")
             }
             args = ["bootstrap", target, plist]
         } else {
@@ -130,7 +130,7 @@ final class BackendController {
     /// Liveness poll for the start/stop confirmation loop (1.5 s per probe —
     /// backends need several to bind their port after launch). Delegates to the
     /// shared `PortProbe`; "up" = any HTTP response, transport failure = down.
-    nonisolated private static func probePort(_ port: Int) async -> Bool {
-        await PortProbe.answers(port: port, timeout: 1.5)
+    nonisolated private static func probe(_ url: URL?) async -> Bool {
+        await PortProbe.answers(url: url, timeout: 1.5)
     }
 }

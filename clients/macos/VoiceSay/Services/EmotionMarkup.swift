@@ -26,10 +26,11 @@ enum EmotionMarkup {
         text.replacingOccurrences(of: pattern, with: replacement, options: .regularExpression)
     }
 
-    /// `voice-say render`'s control tokens — `<|emotion:x|>`, `<|style:x|>`,
-    /// `<|prosody:pause|>`, `<|sfx:x|>` — which reach the stored text of
-    /// some renders. Display-only: `pattern` above (and the daemon's word
-    /// count it mirrors) is left as is, so word counts still include them.
+    /// `<|name:value|>` control tokens (e.g. `<|emotion:joy|>`,
+    /// `<|prosody:pause|>`) that some TTS models accept inline, so they can
+    /// sit in a render's stored text. Display-only: `pattern` above (and the
+    /// daemon's word count it mirrors) is left as is, so word counts still
+    /// include them.
     static let controlTokenPattern = #"<\|[^|<>]*\|>"#
 
     /// Text for a title or preview: control tokens become a space (a pause

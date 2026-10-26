@@ -8,10 +8,11 @@
 # Setup: `make setup` seeds config.local.toml from this file.
 # Full reference: docs/setup/{install,configuration}.md.
 #
-# Env-overridable keys (VOICE_SAY_ prefix; old SAY_MCP_ names still read): data_root → VOICE_SAY_DATA_ROOT,
+# Env-overridable keys (VOICE_SAY_ prefix): data_root → VOICE_SAY_DATA_ROOT,
 # default_backend → VOICE_SAY_DEFAULT_BACKEND, default_voice → VOICE_SAY_DEFAULT_VOICE,
 # say_threshold_chars → VOICE_SAY_SAY_THRESHOLD_CHARS, daemon_port → VOICE_SAY_PORT,
-# cors_origins → VOICE_SAY_CORS. The remaining keys are TOML-only.
+# cors_origins → VOICE_SAY_CORS, longform_max_chunks → VOICE_SAY_LONGFORM_MAX_CHUNKS,
+# align → VOICE_SAY_ALIGN. The remaining keys are TOML-only.
 #
 # The backend catalog (ports / voices / output_format) is overridden separately
 # via the VOICE_SAY_BACKENDS_CONFIG env var → a JSON file (see docs/setup/backends.md).
@@ -34,13 +35,13 @@ allowed_tags = []             # empty = open vocabulary (any tag allowed)
 daemon_port = 8890
 
 # Hard limit on the number of characters accepted in a single render request.
-# Requests exceeding this are rejected with HTTP 400 (the `request` stage).
+# Requests exceeding this are rejected with HTTP 413 (the `request` stage).
 max_render_chars = 200000
 
 # Max chunks per single /render_longform call (~1200 chars/chunk). The default 40
-# (~48k chars / ~45 min audio) is a client-timeout / self-DoS guard for the public
-# HTTP surface. A trusted local box rendering long episodes server-side can raise
-# it. Env: VOICE_SAY_LONGFORM_MAX_CHUNKS.
+# (~48k chars / ~45 min audio) keeps one request from tying up the daemon past
+# a client's timeout. Raise it to render longer pieces in one go.
+# Env: VOICE_SAY_LONGFORM_MAX_CHUNKS.
 longform_max_chunks = 40
 
 # Read-along alignment: word timings measured from each render's audio by

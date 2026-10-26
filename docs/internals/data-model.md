@@ -23,11 +23,13 @@ render.
 | transcript index | `voice.db` → `renders_fts` (FTS5) | maintained from `renders.text` |
 
 `<data_root>` resolves in layers: the committed `config.example.toml` default is
-`./data` (relative to the daemon's working directory); `~/.local/share/voice-say`
-is the in-code fallback used only when no config TOML supplies `data_root` (and
-`VOICE_SAY_DATA_ROOT` overrides either). The SQLite store lives at
-`<data_root>/voice.db` and runs in WAL mode. There is no vault and there are no
-sidecars — the full transcript lives in the `renders` row.
+`./data`, and a relative path in a config file resolves against that file's
+folder (so `daemon/data`); `~/.local/share/voice-say` is the in-code fallback
+used only when no config TOML supplies `data_root`. `VOICE_SAY_DATA_ROOT`
+overrides either, and a relative value there resolves against the directory the
+daemon was started from. The SQLite store lives at `<data_root>/voice.db` and
+runs in WAL mode. The full transcript lives in the `renders` row, with no
+separate transcript files.
 
 The `renders` table is the **single source of truth** for "what was rendered,"
 and it carries the full transcript text. The `progress` and `overlays` tables are
@@ -96,8 +98,8 @@ Notes:
 - `kind` is `"say"` when `chars <= say_threshold_chars`, else `"render"`.
 - `text` is the verbatim transcript, exactly as sent to the backend — full, not
   truncated, for every render.
-- `tags` is the user-supplied tags only, normalized (trim → lowercase →
-  spaces-to-hyphens); the backend id and `voice` are stored in their own
+- `tags` is the user-supplied tags only, normalized (lowercase; spaces and
+  underscores to hyphens; only `a-z0-9-` kept; hyphen runs collapsed); the backend id and `voice` are stored in their own
   columns, not folded into `tags`.
 - `words` is a real whitespace-token word count of the transcript, computed
   after stripping inline `[emotion]` and `<angle>` tags (floored at 1) — not a
@@ -105,12 +107,14 @@ Notes:
 - `resume_full_text` (TEXT, nullable) and `resume_char_offset` (INTEGER,
   nullable) are set **only** on a save-and-stop draft and are `NULL` for every
   normal or completed render.
-- `seam_map` (TEXT JSON, nullable) records the per-chunk seam offsets of a
-  streaming render as `[[audio_s, char_off], ...]` — one entry per chunk, mapping
-  the cumulative audio second to the transcript char offset at that seam. It is
-  `NULL` for single-shot and any non-stream render. They are additive columns introduced by an
-  idempotent, PRAGMA-guarded migration; existing databases upgrade in place and
-  non-draft rows stay byte-identical to the pre-resume schema.
+- `seam_map` (TEXT JSON, nullable) holds the read-along points
+  `[[audio_s, char_off], ...]`, each mapping an audio second to a transcript char
+  offset: the chunk seams of a streaming render, plus a point per spoken word once
+  alignment has measured the audio. It is `NULL` for a single-shot render until
+  it is aligned. These columns were added
+  after the first schema: on start the daemon adds any that an older `voice.db`
+  lacks (checked with `PRAGMA table_info`), in place, and existing rows keep
+  `NULL` in them.
 
 ### Resume columns
 
@@ -152,7 +156,7 @@ session; mid-playback ticks leave it unchanged. `duration_s` sticks once known.
 `completed` is a **playback-completion** field, not a tag: it tracks whether a
 render was *played to the end* (`played_s >= duration_s`), not whether the render
 finished synthesizing. A freshly-rendered clip carries `completed=false` until
-the operator listens to it; once played to the end it flips to `true`. This field
+it is listened to; once played to the end it flips to `true`. This field
 drives the virtual, undeletable `#completed` tag on the macOS client — the tag
 appears only when `completed` is true (see [tags.md](tags.md)). Render completion
 is tracked separately and is not the same thing.

@@ -1,4 +1,4 @@
-.PHONY: help setup install-cli doctor run test publishable-check app kokoro kokoro-run
+.PHONY: help setup install-cli doctor run test app kokoro kokoro-run
 
 # Default target — list available targets.
 help:
@@ -13,7 +13,6 @@ help:
 	@echo "  kokoro-run         Start the default backend on 127.0.0.1:8000."
 	@echo "  app                Build the macOS app (clients/macos/build/VoiceSay.app)."
 	@echo "  test               Run the test suite"
-	@echo "  publishable-check  Run the publishable-check script"
 	@echo ""
 
 # One-command setup: venv + deps, CLI on PATH, config.local.toml seeded from
@@ -110,7 +109,3 @@ install-cli:
 # Run tests.
 test:
 	cd daemon && .venv/bin/python -m pytest -q
-
-# Run the publishability gate script.
-publishable-check:
-	bash scripts/publishable-check.sh

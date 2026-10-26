@@ -381,7 +381,7 @@ struct SettingsScreen: View {
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundStyle(Tokens.muted)
                 Text("·").foregroundStyle(Tokens.ultraDim)
-                Text("standalone macOS surface for voice-say daemon")
+                Text("macOS app for the voice-say daemon")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(Tokens.dim)
             }

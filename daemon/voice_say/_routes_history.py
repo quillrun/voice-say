@@ -86,7 +86,7 @@ async def progress_post(request: web.Request) -> web.Response:
             duration_s=float(body["duration_s"]) if body.get("duration_s") is not None else None,
             completed=bool(body["completed"]) if "completed" in body else None,
             started=bool(body.get("started", False)),
-            prev=state.progress.get(ts),  # avoid per-tick O(N) JSONL scan
+            prev=state.progress.get(ts),  # avoid a per-tick db read
         )
     except (ValueError, TypeError) as exc:
         # TypeError covers non-numeric JSON (e.g. {"played_s": null} →
@@ -175,7 +175,7 @@ async def audio(request: web.Request) -> web.Response:
 async def align(request: web.Request) -> web.Response:
     """Measure one render's word timings now (align.py) and store them as its
     read-along seam_map; the reader picks them up from the re-announced row.
-    For rows rendered before alignment existed (`voice-say align`)."""
+    For rows without word timings (`voice-say align`)."""
     ts = request.match_info["ts"]
     if engine.aligner is None:
         return json_error("unavailable", "read-along alignment is off "
@@ -191,8 +191,8 @@ async def align(request: web.Request) -> web.Response:
 
 async def reload(request: web.Request) -> web.Response:
     """Re-hydrate the in-memory cache from the SQLite store. External
-    processes (a chunked-render queue, the migration script, a manual
-    sqlite3 write) call this after writing to voice.db so VoiceSay + SSE
+    processes (a manual sqlite3 write, a restore from backup, another tool)
+    call this after writing to voice.db so VoiceSay + SSE
     subscribers see the new rows without a daemon restart."""
     state: State = request.app[STATE_KEY]
     counts = state.reload_from_disk()

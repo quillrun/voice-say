@@ -188,9 +188,9 @@ def _mk_backend(bid, default_voice, voices):
 
 def test_resolve_voice_is_backend_aware(monkeypatch):
     """Regression: the global default voice must only be applied to backends
-    that declare it. A cloned voice that exists on only one backend must NOT
-    be forced onto a preset backend — that 502'd with "no output wav". The
-    backend then falls back to its own default_voice."""
+    that declare it. A voice that exists on only one backend must NOT be
+    forced onto another backend, which would fail the request. That backend
+    then falls back to its own default_voice."""
     monkeypatch.setattr(engine.config, "DEFAULT_VOICE", "af_cloned")
     clone = _mk_backend("clone", "af_cloned", ["af_cloned", "af_cloned_calm"])
     preset = _mk_backend("preset", "af_alloy", ["af_alloy", "af_bella"])

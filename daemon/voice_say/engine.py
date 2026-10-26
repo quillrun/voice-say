@@ -146,8 +146,8 @@ async def _synth(text: str, backend: "Backend", voice: str, speed: float,
         return await _tts_post(text, backend, voice, speed, client, **kw)
 
 
-# Set by http_server._startup so the in-memory cache stays in sync with the
-# on-disk JSONL. None when running engine standalone (tests, scripts).
+# Set by http_server._startup so the in-memory cache stays in sync with
+# voice.db. None when running engine standalone (tests, scripts).
 on_history_appended: Callable[[dict[str, Any]], None] | None = None
 
 # Set by http_server._startup to align.align when read-along alignment is
@@ -190,7 +190,7 @@ class Backend:
     # "tts-1" is the generic default for single-model backends.
     model: str = "tts-1"
     # Base URL of the speech server ("http://127.0.0.1:8000"; a trailing /v1 is
-    # dropped). Empty = http://{host}:{port}, the older catalog form.
+    # dropped). Empty = http://{host}:{port}, the host + port catalog form.
     url: str = ""
     # True when the catalog entry leaves `voices` out: the daemon then asks the
     # server (GET /v1/audio/voices?model=, mlx-audio's server answers it).
@@ -200,13 +200,13 @@ class Backend:
     #   {"kind": "launchd", "label": "local.voicesay.my-tts"}       — native
     #   {"kind": "docker",  "compose_service": "my-tts", "container": "…"}
     #   {"kind": "none"} / None — not client-managed (start it yourself)
-    # A private overlay (VOICE_SAY_BACKENDS_CONFIG) can remap labels.
+    # A custom catalog (VOICE_SAY_BACKENDS_CONFIG) can remap labels.
     service: dict[str, Any] | None = None
     # Per-request longform chunk ceiling for THIS backend. 0 = use the global
-    # LONGFORM_CHUNK_MAX. A backend that maintains its own in-request continuity
-    # (one that carries prior-chunk audio across its own sub-chunk seams) sets this
-    # larger so each daemon request covers more text and the daemon-level seam
-    # between requests mostly disappears. See backends.json `longform_chunk_max`.
+    # LONGFORM_CHUNK_MAX. A backend whose quality improves with longer context
+    # (it splits and joins long input itself) sets this larger, so each daemon
+    # request covers more text and there are fewer daemon-level seams. Set in
+    # the backend's catalog entry (`longform_chunk_max`, docs/setup/backends.md).
     longform_chunk_max: int = 0
 
     @property
@@ -291,8 +291,7 @@ def allowed_tag_set() -> set[str]:
 def unknown_tags(norm_tags: list[str]) -> list[str]:
     """Tags rejected by the closed vocabulary, in input order. Empty list in
     open mode (allowed_tags == []) or when every tag is permitted. Shared by
-    the /render front door and overlay tag edits so both enforce identically
-    (ADR-0002)."""
+    the /render front door and overlay tag edits so both enforce identically."""
     allowed = allowed_tag_set()
     if not allowed:
         return []
@@ -338,7 +337,8 @@ LONGFORM_CHUNK_MAX = 1200
 # this caps a single longform call at ~48k input chars / ~45 min of audio.
 # Config-driven (default 40); the guard reads config.LONGFORM_MAX_CHUNKS at call
 # time so a local TOML override / reload() takes effect without a restart.
-# Accepted render_longform modes: "sequential" (default, legacy) and "stream"
+# Accepted render_longform modes: "sequential" (the engine default; the HTTP
+# route defaults to stream) and "stream"
 # (progressive per-chunk broadcast). Single source for the guard shared by the
 # engine and the /render_longform route's fast-fail mirror.
 LONGFORM_MODES = ("sequential", "stream")
@@ -360,19 +360,18 @@ def _chunk_longform(text: str, MAX: int = LONGFORM_CHUNK_MAX) -> tuple[list[str]
     Best-effort ceiling: chunks are <=MAX EXCEPT a single sentence longer than
     MAX (no '. ' boundary to split on), which is emitted whole rather than wrapped
     mid-word. Accumulate whole paragraphs until the next would overflow MAX; a
-    single paragraph larger than MAX is sentence-split on '. '. Proven algorithm —
-    the `chunks` returned here are byte-identical to the pre-`seps` version, so the
-    validated chunk counts are unchanged (do NOT add a hard wrap here without
-    re-baselining those fixtures).
+    single paragraph larger than MAX is sentence-split on '. '. Changing the
+    split changes chunk counts, which the longform tests pin (a hard wrap here
+    would move them).
 
     Returns ``(chunks, seps)``. ``seps[i]`` is the string that joins ``chunks[i]``
     to ``chunks[i-1]`` when reconstructing the full transcript: ``'\\n\\n'`` at a
     real paragraph boundary, ``' '`` between sentence-split pieces of a SINGLE
     over-long paragraph, and ``''`` for ``chunks[0]``. So
     ``''.join(s + c for c, s in zip(chunks, seps))`` is the normalized transcript
-    with NO fabricated paragraph break inside a split paragraph — the bug the old
-    uniform ``"\\n\\n".join(chunks)`` introduced for paragraphs longer than MAX
-    (visible mainly on a backend with a small MAX)."""
+    with NO fabricated paragraph break inside a split paragraph (a uniform
+    ``"\\n\\n".join(chunks)`` would add one in every paragraph longer than MAX,
+    visible mainly on a backend with a small MAX)."""
     paras = [p.strip() for p in text.split('\n\n') if p.strip()]
     chunks: list[str] = []
     seps: list[str] = []
@@ -469,7 +468,7 @@ class RenderCancelled(Exception):
 
 
 # --- Model-bypass mock (dev/test) -------------------------------------------
-# When a render carries mock=true (a Compose dev toggle), the engine skips the
+# When a POST /render_longform carries mock=true, the engine skips the
 # model and, per chunk, returns a PRE-EXISTING fixture WAV from
 # config.MOCK_CHUNK_DIR after a timer sleep — no model, no network. The render
 # is split into exactly len(fixtures) chunks of the REAL text (so the reader
@@ -692,8 +691,8 @@ async def render(
     except OSError as exc:
         raise RenderError("archive", str(exc)) from exc
 
-    # 2.5 Probe duration so the db row carries it from render time — no
-    # VoiceSay backfill. File work runs off the event loop (see _finalize_longform).
+    # 2.5 Probe duration so the db row carries it from render time, with no
+    # later backfill by a client. File work runs off the event loop (see _finalize_longform).
     duration_s = await asyncio.to_thread(_sinks.probe_duration_s, archive_path, fmt)
 
     # 3. Persist the render row (full transcript included). Roll back the
@@ -874,7 +873,7 @@ async def render_longform(
     mock: bool = False,
     is_gone: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
-    """Tier-1 longform render: chunk → per-chunk WAV → gapless concat to
+    """Longform render: chunk → per-chunk WAV → gapless concat to
     ONE mp3 → ONE archive file + ONE db row.
 
     Mirrors `render()`'s contract and error staging, but renders each
@@ -884,7 +883,8 @@ async def render_longform(
     exactly one `renders` row (ts as PK), one audio file, one entry dict.
 
     ``mode``:
-      - "sequential" (default) — UNCHANGED legacy behavior. Renders all
+      - "sequential" (this function's default; the HTTP route defaults to
+        "stream"). Renders all
         chunks one after another, concats once, inserts ONE
         row, fires the canonical render event. No streaming broadcasts.
       - "stream" — renders chunks serially the same way, archives EACH chunk to its own transient wav, and
@@ -1102,7 +1102,7 @@ async def _render_longform_stream(
     # /finalize (a SEPARATE request — this render's /render_longform POST
     # stays open until the episode finishes) can signal us between chunks.
     # Unregistered in the finally. A None registry (tests / standalone) → no
-    # control surface, behaviour identical to the pre-cancel path.
+    # control surface: nothing can cancel or finalize it.
     ctl = episode_registry.register(episode_id) if episode_registry is not None else None
 
     # episode_start — ONCE, before the chunk loop. No voice.db row exists
@@ -1300,7 +1300,7 @@ async def _render_longform_stream(
         # clean chunk-boundary char offset rendered so far. A later
         # POST /episode/resume re-chunks `episode_full_text`, skips chunks whose
         # cumulative end <= `rendered_chars`, and renders only the remainder. A
-        # normal completion leaves both None → the row matches the old schema.
+        # normal completion leaves both None, as on a /render row.
         resume_kwargs: dict[str, Any] = {}
         if finalized_early:
             resume_kwargs = {
@@ -1647,16 +1647,14 @@ def _resolve_voice(voice: str | None, backend: Backend) -> str:
     Precedence: an explicit per-call voice always wins (pass-through — the
     declared `backend.voices` is a curated subset, not the full set a backend
     accepts, so we never reject an explicit voice). With no explicit voice,
-    the operator's global default (``config.DEFAULT_VOICE``) is used ONLY when
+    the configured global default (``config.DEFAULT_VOICE``) is used ONLY when
     the chosen backend actually declares it; otherwise the backend falls back
     to its OWN ``default_voice``.
 
-    This keeps a backend-specific default (e.g. a cloned voice that
-    only exists on one backend) from being forced onto another backend
-    that has no such voice file — the old ``voice or config.DEFAULT_VOICE or
-    backend.default_voice`` always picked the global default and produced an
-    upstream HTTP 500 "no output wav" → 502. Mirrors the macOS app's
-    ComposeView voice-defaulting (one resolution rule, both surfaces)."""
+    So a voice that exists on one backend is never sent to another backend
+    that has no such voice (the backend would fail the request). Mirrors the
+    macOS app's ComposeView voice-defaulting (one resolution rule, both
+    surfaces)."""
     if voice:
         return voice
     gdv = config.DEFAULT_VOICE
@@ -1669,7 +1667,7 @@ def _validate(text: str, backend_id: str, voice: str | None,
               tags: list[str] | None) -> tuple[str, str, Backend, list[str]]:
     """Run all front-door validation in one place: text shape, backend
     existence, tag normalization + closed-vocab check, emotion-tag
-    stripping for backends that don't support them (currently all)."""
+    stripping for backends that don't support them."""
     text = (text or "").strip()
     if not text:
         raise RenderError("request", "empty text")

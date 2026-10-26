@@ -108,8 +108,8 @@ struct RenderQueueView: View {
                 Section {
                     // Reuse the audio card (CommitRow) in rendering mode:
                     // a paused draft opens the details screen on click — no
-                    // inline expand — and surfaces its render progress (R2) plus
-                    // Continue-render / Show-in-Finder actions inline (R3).
+                    // inline expand — and surfaces its render progress plus
+                    // Continue-render / Show-in-Finder actions inline.
                     ForEach(pausedDrafts, id: \.id) { d in
                         CommitRow(entry: d,
                                   isExpanded: false,

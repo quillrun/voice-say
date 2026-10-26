@@ -8,12 +8,10 @@
 #
 #   1. $TMPDIR/voice-mpv.sock     — voice-say render's mpv (precise ±N seek)
 #   2. $TMPDIR/voice-sayapp.sock  — the macOS app's IPC server
-#   3. media-remote (fallback) — macOS MediaRemote, routes to Now
-#                                Playing (Music, Safari, Spotify, …)
+#   3. media-remote (optional)    — a command you provide; see below
 #
 # Single-player coordination means only one of (1)/(2) is alive at a
-# time. The media-remote fallback is macOS-only; on Linux the socket
-# path is the only option.
+# time.
 #
 # Subcommands:
 #   voice-ctl toggle              # play/pause
@@ -32,15 +30,21 @@ MPV_SOCK="$RUN_DIR/voice-mpv.sock"
 APP_SOCK="${VOICESAY_APP_SOCKET:-$RUN_DIR/voice-sayapp.sock}"
 PID_FILE="$RUN_DIR/voice-last.pid"
 
-# Look up media-remote next to voice-ctl itself so the script stays
-# portable across machines. Falls back to common install paths.
+# Optional fallback when no voice-say player is live: a `media-remote` command
+# (next to voice-ctl, on PATH, or the one $VOICE_CTL_MEDIA_REMOTE names) that
+# takes `toggle`, `pause`, `skip-forward N` or `skip-backward N`, e.g. one that
+# drives the system's Now Playing session. None ships with voice-say; without
+# one, a control with no live player reports "no playback".
 SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)"
+MR_CMD="${VOICE_CTL_MEDIA_REMOTE:-media-remote}"
 MEDIA_REMOTE=""
-for candidate in "${SCRIPT_DIR}/media-remote" \
-                 "${HOME}/.local/bin/media-remote" \
-                 "/usr/local/bin/media-remote" \
-                 "/opt/homebrew/bin/media-remote"; do
-    if [ -x "$candidate" ]; then MEDIA_REMOTE="$candidate"; break; fi
+if [ -x "$SCRIPT_DIR/$MR_CMD" ]; then MEDIA_REMOTE="$SCRIPT_DIR/$MR_CMD"
+else MEDIA_REMOTE="$(command -v "$MR_CMD" 2>/dev/null || true)"
+fi
+# A hardware key or launchd job may run this with a short PATH.
+for candidate in "${HOME}/.local/bin/$MR_CMD" "/usr/local/bin/$MR_CMD" "/opt/homebrew/bin/$MR_CMD"; do
+    [ -n "$MEDIA_REMOTE" ] && break
+    if [ -x "$candidate" ]; then MEDIA_REMOTE="$candidate"; fi
 done
 
 # Optional feedback sounds (e.g. for a hardware key that runs voice-ctl): a

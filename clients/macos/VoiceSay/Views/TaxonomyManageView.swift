@@ -4,9 +4,8 @@
 //   CATEGORIES — rename display name (id/tag unchanged; free, no entry touches).
 //     Built-in views (History/New/Rendering/Says) are locked — shown read-only.
 //   TAGS — per-tag color (system color picker, app-side TagColorStore).
-//     Tag RENAME is daemon-gated (bulk endpoint). Shown read-only with a
-//     "rename arrives with the taxonomy migration" callout rather than a broken
-//     inline edit. Omitted from the main flow; note at section footer.
+//     Tags are not renamed here: the daemon has no tag-rename endpoint, so
+//     the section caption lists only what works (add / delete / color).
 //
 // Everything commits IMMEDIATELY — this window edits the vocabulary itself
 // (category + tag TYPES), so there is no Save button: renames commit on submit,
@@ -310,7 +309,7 @@ struct TaxonomyManageView: View {
     @ViewBuilder
     private var colorSection: some View {
         TaxonomySectionLabel(label: "TAGS", count: allTags.count)
-        Text("add / delete · set color · rename arrives with the taxonomy migration")
+        Text("add / delete · set color")
             .font(.system(size: 11, design: .monospaced))
             .foregroundStyle(Tokens.ultraDim)
             .padding(.bottom, Spacing.xs)

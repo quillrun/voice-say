@@ -12,7 +12,7 @@ struct ContentView: View {
     @Environment(UIRouter.self) var router
     @Environment(HealthMonitor.self) var health
 
-    // Lazy "load more on scroll" window over store.filtered (item 4) — render
+    // Lazy "load more on scroll" window over store.filtered — render
     // 50, grow by 50 when the sentinel scrolls into view. Reset on filter
     // change. Keeps the first paint cheap when the history is large.
     @State private var visibleCount = 50
@@ -130,7 +130,7 @@ struct ContentView: View {
                                 // visible CommitRows (+ small buffer).
                                 // Eager VStack rendered every PlayerPanel
                                 // off-screen too, blowing layout time as
-                                // the JSONL grew. LazyVStack keeps the
+                                // the library grew. LazyVStack keeps the
                                 // scroller smooth at hundreds of rows.
                                 let shown = Array(store.filtered.prefix(visibleCount))
                                 LazyVStack(alignment: .leading, spacing: Spacing.sm) {
@@ -140,7 +140,7 @@ struct ContentView: View {
                                                   onToggle: { toggleRow(entry) })
                                             .id(entry.id)
                                     }
-                                    // Lazy-load 50 more on scroll (item 4).
+                                    // Lazy-load 50 more on scroll.
                                     LoadMoreSentinel(hasMore: visibleCount < store.filtered.count,
                                                      onLoadMore: { visibleCount += 50 })
                                 }

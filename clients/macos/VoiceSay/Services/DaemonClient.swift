@@ -1,17 +1,11 @@
-// DaemonClient — single HTTP client for the voice-say daemon.
-//
-// Before this type existed, four Services (Renderer, HistoryStore,
-// AudioPlayer, AppConfig) each constructed their own URLRequests with
-// the same `http://127.0.0.1:8890` base. Changing the port took six
-// edits. This class owns the base URL, a shared URLSession (so we get
-// real connection pooling), one place for timeout policy, and a single
-// surface for the future when we add retry/auth.
+// DaemonClient — single HTTP client for the voice-say daemon. It owns the
+// base URL, a shared URLSession (real connection pooling) and one place for
+// timeout policy, so no other type builds daemon requests.
 //
 // Why `final class` (not `actor`): every endpoint is a stateless HTTP
-// call against an immutable session + decoder. The actor isolation
-// previously serialized parallel daemon calls onto one executor for
-// nothing and forced `await` on `eventsURL` reads. URLSession is
-// already thread-safe.
+// call against an immutable session + decoder. An actor would serialize
+// parallel daemon calls onto one executor for nothing and force `await`
+// on `eventsURL` reads. URLSession is already thread-safe.
 
 import Foundation
 
@@ -27,8 +21,9 @@ final class DaemonClient: @unchecked Sendable {
     /// This app run's id on render requests (see RenderRequest.clientRef).
     nonisolated static let clientRef = "app-" + UUID().uuidString
 
-    /// Override via UserDefaults key "say.mcp.base.url" — handy for tests
-    /// or pointing at a daemon on another machine.
+    /// Override via the UserDefaults key `voicesay.daemonURL`, for a daemon
+    /// on another port. Same host only: the app reads audio from the paths
+    /// the daemon reports.
     let baseURL: URL
 
     private let session: URLSession
@@ -48,7 +43,9 @@ final class DaemonClient: @unchecked Sendable {
         // longest render; each request's own idle timeout still applies.
         cfg.timeoutIntervalForResource = Self.longestRenderS
         cfg.waitsForConnectivity = false
-        cfg.httpAdditionalHeaders = ["User-Agent": "VoiceSay/1.0 (macOS)"]
+        // The bundle's version; a bare `swift test`/`swift run` has none.
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+        cfg.httpAdditionalHeaders = ["User-Agent": "VoiceSay/\(version) (macOS)"]
         self.session = URLSession(configuration: cfg)
     }
 
@@ -176,7 +173,7 @@ final class DaemonClient: @unchecked Sendable {
     var eventsURL: URL { baseURL.appending(path: "/events") }
 
     /// "host:port" for display (Settings services row) — derived from the
-    /// live baseURL so a `say.mcp.base.url` override shows truthfully
+    /// live baseURL so a `voicesay.daemonURL` override shows truthfully
     /// instead of a hardcoded loopback literal.
     var baseHostPort: String {
         "\(baseURL.host() ?? "127.0.0.1"):\(baseURL.port ?? 8890)"
@@ -188,7 +185,7 @@ final class DaemonClient: @unchecked Sendable {
                                    query: [String: String] = [:],
                                    timeout: TimeInterval = 3) async throws -> T {
         // Unreachable-in-practice for our fixed localhost paths, but a bad
-        // `say.mcp.base.url` override shouldn't be able to crash the app —
+        // `voicesay.daemonURL` override shouldn't be able to crash the app —
         // fail as a normal request error instead.
         guard var comp = URLComponents(url: baseURL.appending(path: path),
                                        resolvingAgainstBaseURL: false) else {
