@@ -1,9 +1,8 @@
 """SQLite store — the single durable home for renders, progress, overlays.
 
-Replaces the three JSONL files + the hand-rolled `_jsonl_store.py`
-(fcntl locking + size-triggered compaction). One `voice.db` (WAL mode)
-gives concurrent readers, native cross-process write serialization, and
-FTS5 full-text search over transcripts — no custom locking or compaction.
+One `voice.db` (WAL mode) gives concurrent readers, native cross-process
+write serialization, and FTS5 full-text search over transcripts — no custom
+locking or compaction.
 
 Audio is NOT stored here: rendered audio stays as files under
 `voice-archive/` and the `renders.archive_path` column references it.
@@ -33,9 +32,8 @@ from . import config
 
 # Module-level connection. The daemon is single-process (asyncio, one
 # thread) so one shared connection is correct; `check_same_thread=False`
-# keeps the migration script + tests free to drive it from a worker
-# thread. A lock guards writes so a stray cross-thread caller can't
-# interleave a transaction.
+# keeps tests free to drive it from a worker thread. A lock guards writes
+# so a stray cross-thread caller can't interleave a transaction.
 _conn: sqlite3.Connection | None = None
 _db_path: Path = config.DB_PATH
 _lock = threading.RLock()
@@ -57,7 +55,7 @@ CREATE TABLE IF NOT EXISTS renders (
   archive_path  TEXT,
   text          TEXT NOT NULL,      -- full transcript
   tags          TEXT                -- JSON array
-  -- Post-v1 additive columns (resume_full_text, resume_char_offset,
+  -- Columns added after the first schema (resume_full_text, resume_char_offset,
   -- render_elapsed_s, seam_map) live ONLY in _migrate_add_columns so a fresh DB
   -- and an upgraded DB converge through one code path.
 );
@@ -263,8 +261,8 @@ def close() -> None:
 
 
 def _abs_archive_path(p: str | None) -> str | None:
-    """A relative archive_path (a recordings bundle, which can't know where it
-    will be unzipped) is relative to the data root — the db's own folder."""
+    """A relative archive_path (a hand-moved or imported library) counts from
+    the data root — the db's own folder."""
     if not p or Path(p).is_absolute():
         return p
     return str(_db_path.parent / p)
@@ -317,8 +315,8 @@ def insert_render(entry: dict[str, Any]) -> None:
             {
                 **entry,
                 "tags": json.dumps(entry.get("tags") or [], ensure_ascii=False),
-                # Nullable; the normal render() path never sets them → NULL,
-                # so non-draft rows are byte-identical to the pre-resume schema.
+                # Nullable; the normal render() path never sets them, so
+                # non-draft rows leave them NULL.
                 "resume_full_text": entry.get("resume_full_text"),
                 "resume_char_offset": entry.get("resume_char_offset"),
                 # Wall-clock render seconds; None for any caller not measuring it.

@@ -1,4 +1,4 @@
-"""Longform render tests — Tier-1 concat path.
+"""Longform render tests — the chunk + concat path.
 
 Exercises `engine.render_longform`: multi-paragraph text → chunked → each
 chunk rendered SERIALLY to WAV against a mock TTS → gapless concat into

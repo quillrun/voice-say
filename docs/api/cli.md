@@ -1,6 +1,6 @@
 # CLI
 
-One command, a thin client of the local daemon: `voice-say render` renders text to speech and plays it, and the other `voice-say` commands work the library (find, search, tag, retitle, star, delete). Both are installed by `cli/install.sh` next to `voice-ctl`. `VOICE_SAY_DAEMON_URL` names the daemon URL (the pre-2026-10-26 names, `SAY_MCP_*` and `SAY_DEFAULT_*`, are still read when the new one is unset).
+One command, a thin client of the local daemon: `voice-say render` renders text to speech and plays it, and the other `voice-say` commands work the library (find, search, tag, retitle, star, delete). Both are installed by `cli/install.sh` next to `voice-ctl`. `VOICE_SAY_DAEMON_URL` names the daemon URL.
 
 # `voice-say render`
 
@@ -27,8 +27,7 @@ By default `voice-say render` renders on the configured default backend/voice an
 |---|---|---|
 | `--voice` | `<voice-id>` | Voice to render with. Defaults to the backend's default voice. |
 | `--speed` | `<float>` | Playback rate. Honoured only by speed-capable backends; ignored otherwise. |
-| `--format` | `mp3` \| `wav` \| `pcm` | Extension for the `--out` file. The CLI does **not** send a format to the daemon — the actual encoding is backend-determined; this only sets the output filename's extension. Without `--out` or `--format`, the file takes the extension of the audio the daemon stored (`.wav` from a WAV backend). |
-| `--out` | `<path>` | Also write the rendered audio to this path. |
+| `--out` | `<path>` | Also write the rendered audio to this path. The backend decides the format, so the file takes the extension of the audio the daemon stored (`.wav` from a WAV backend); a path with a different extension is saved under the right one, with a warning on stderr. |
 | `--file` | `<path>` | Read the text to render from a file instead of an argument. |
 | `--no-play` | — | Render and archive only; do not play back. |
 | `--json` | — | Print one JSON object on stdout — `{id, path, out, title, duration_s, backend, voice, kind, playing}` (`id` is the row's `ts`, `path` the archived file, `out` the copy) — and send every other line to stderr. Refused (exit 4) with `--fast`, which makes no library row. |
@@ -52,10 +51,10 @@ By default `voice-say render` renders on the configured default backend/voice an
 - **Title rule.** Text longer than the daemon's say threshold (`say_threshold_chars`, read from `GET /config`) is a library entry, not a ping, so it needs a title (`--title` or `--title-from`). Without one `voice-say render` exits `4` and renders nothing. Short text needs no title.
 - **Tag rule.** Tags are normalized (lowercase; spaces/underscores → hyphens; only `a-z0-9-` kept; hyphen runs collapsed and trimmed — the same rule as the app). Every `--tag` must already be in use: `voice-say render` checks them with `voice-say tags --check` against `GET /tags`. An unknown tag exits `4` before rendering, naming the nearest existing tags; `--new-tag=<name>` coins one on purpose. In closed-vocabulary mode (when `allowed_tags` is set in config), a tag outside the list is still rejected by the daemon (the render fails with exit `3`).
 - **Pronunciation.** Fixes for words the voice mispronounces live in the daemon config's `[pronounce]` table (see `daemon/config.example.toml`), not in the text you pass.
-- **Titles.** `--title` / `--title-from` / `--series` / `--episode` ride on the render request; against an older daemon that ignores them the CLI sets them with `POST /overlays/<ts>` after the render. That follow-up is best-effort: a failed write only warns on stderr and the run still exits `0`. The old warning for a missing title on long text is gone, because a missing title is now a refusal (exit `4`).
+- **Titles.** `--title` / `--title-from` / `--series` / `--episode` ride on the render request, so the new row carries them. If the stored title differs from the one passed, a warning goes to stderr and the run still exits `0`.
 - **Failures.** A failed render prints the daemon's stage and message; when the finished part of a longform render was kept, a `kept: draft <ts>` line names it.
-- **Playback control flags** (`--stop`, `--seek`, `--toggle`) act on the current playback session rather than rendering new text. They don't require a text argument.
-- **Format.** `--format` only sets the extension of the `--out` file; it does not change what the daemon renders (the encoding is backend-determined). Without it, the default `--out` file takes the stored audio's extension.
+- **Playback control flags** (`--stop`, `--seek`, `--toggle`) act on the current playback session rather than rendering new text. They don't require a text argument. They run `voice-ctl`, which drives the CLI's mpv or the macOS app; with neither playing it hands the control to an optional `media-remote` command if you provide one (`VOICE_CTL_MEDIA_REMOTE`, see [`cli/README.md`](../../cli/README.md#env-vars)).
+- **Format.** There is no format flag: the backend decides the encoding, and the `--out` copy is named for it.
 - **Streaming / longform.** Text longer than the stream threshold (default 1200 characters, configurable via `VOICE_SAY_RENDER_STREAM_THRESHOLD`) is rendered through the longform endpoint automatically, even without `--stream`.
 - **Fast path (`--fast`).** Unlike `--stream` (still archived, just chunked), `--fast` bypasses the daemon archive entirely: it reads the backend's url and model from `GET /config` and sends `POST /v1/audio/speech` with `stream: true, response_format: "pcm"` straight to the backend, piping the 16-bit mono PCM into the player (rate from a `rate=` in the Content-Type, else 24 kHz). mlx-audio's server streams this way. Nothing is written to `voice.db` on this path — `--tag`/`--title` don't apply. Use `--backend=<id>` (the normal `/render` path) for an archived, tagged render on the same backend.
 - **Emotion tags.** On backends without emotion support (`supports_emotion_tags: false`, e.g. `kokoro`), inline `[emotion]`-style bracket tags are stripped by the daemon before synthesis (the CLI does not strip them itself). On backends with `supports_emotion_tags: true` the bracket text is left intact so the backend can interpret it.
@@ -96,13 +95,13 @@ voice-say render --file=./notes/briefing.txt --title="Weekly briefing" --tag=bri
 Render without playing (archive only), and also save a copy to a path:
 
 ```bash
-voice-say render --no-play --out=./out/welcome.wav --format=wav "Welcome aboard."
+voice-say render --no-play --out=./out/welcome.wav "Welcome aboard."
 ```
 
 Attach multiple tags (repeat `--tag`):
 
 ```bash
-voice-say render --tag=briefing --new-tag=draft "Draft of the weekly briefing."
+voice-say render --tag=briefing --new-tag=weekly "The weekly briefing."
 ```
 
 Control the current playback:
@@ -205,7 +204,7 @@ Find a ts, then retitle it:
 
 ```bash
 voice-say history --series "Daily Notes"
-voice-say set 2026-10-19T09-14-02 --title "Daily Notes 17: Post-training"
+voice-say set 2026-05-29T10:15:30.123456Z --title "Daily Notes 17: Post-training"
 ```
 
 Search transcripts:

@@ -2,8 +2,8 @@
 // SSE stream and keeps the entry list observable for SwiftUI. Initial GET
 // /history seeds the table; the stream then delivers `snapshot`, `render`,
 // `progress`, and `overlay` events for live updates. Mutations (star, tag,
-// bookmark, soft-delete) POST to /overlays/<ts>; the daemon owns
-// voice-overlays.jsonl as the source of truth.
+// bookmark, soft-delete) POST to /overlays/<ts>; the daemon's database is
+// the source of truth.
 
 import AppKit  // NSWorkspace.recycle (the default `recycler`)
 import Foundation
@@ -167,7 +167,7 @@ final class HistoryStore {
 
     // Overlay mirrors — populated from entry.overlay when /history loads
     // and updated live via SSE overlay events. Daemon owns the truth
-    // (voice-overlays.jsonl); these maps are just convenient client-side
+    // (its database); these maps are just convenient client-side
     // indexes keyed by entry ts. Mutations POST to /overlays/<ts> and
     // optimistically update the local mirror so the UI reacts immediately.
     var bookmarks: [String: [Bookmark]] = [:]
@@ -296,8 +296,8 @@ final class HistoryStore {
                 Task { await self.load() }
             }
         }
-        // /history via the daemon. The daemon proxies the JSONL read so the
-        // app doesn't need direct filesystem access to the archive tree.
+        // /history via the daemon, so the app never opens the daemon's
+        // database itself.
         isLoading = true
         defer { isLoading = false }
         if !AppConfig.shared.loadedFromDaemon {
@@ -325,8 +325,8 @@ final class HistoryStore {
             rebuildOverlayMirrors()
             VoiceEntry.forgetMissingAudio()
             // Drop New-inbox ids only when CONFIRMED deleted — present before
-            // the fetch but absent from the fresh payload (e.g. transient
-            // render rows the V2 queue merged-then-deleted). A degenerate
+            // the fetch but absent from the fresh payload (e.g. a row another
+            // client merged into another and deleted). A degenerate
             // empty payload (daemon mid-restart) prunes nothing.
             let pruned = Self.prunedNewIDs(newIDs, preFetch: preFetch,
                                            fetched: Set(entries.map(\.ts)))
@@ -646,9 +646,9 @@ final class HistoryStore {
             teardownStreamingCard()
             lastError = Self.episodeErrorText(ev)
         case .other(let env):
-            // Out-of-band db changes (e.g. an external render queue
-            // merging audio into a pre-staged row, then deleting the transient
-            // insert) call POST /reload; the daemon broadcasts {type:"reloaded"}.
+            // Out-of-band db changes (e.g. a script merging audio into a
+            // pre-staged row, then deleting the transient insert) call
+            // POST /reload; the daemon broadcasts {type:"reloaded"}.
             // Refetch /history so the change lands without a relaunch — otherwise
             // the transient render lingers as a wrong-named ghost and the merged
             // row never flips to its rendered state in the live view.

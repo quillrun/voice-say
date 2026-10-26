@@ -1,6 +1,6 @@
 # Security and Safety
 
-> The daemon's safety posture: loopback-only by default, CORS behind an env gate (with the streaming-response caveat), a path-traversal guard on audio, durable SQLite state (atomic audio writes plus a WAL-mode `voice.db`), and a tracked-core-vs-private-overlay code seam enforced by a readiness gate.
+> The daemon's safety posture: loopback-only by default, CORS behind an env gate (with the streaming-response caveat), a path-traversal guard on audio, durable SQLite state (atomic audio writes plus a WAL-mode `voice.db`), and only generic defaults in the repo.
 
 ## Trust boundary: one machine
 
@@ -26,8 +26,8 @@ flowchart TB
 - All artefacts (the audio archive and the `voice.db` SQLite store) are written to local paths you
   control via `data_root`.
 
-> Reporting a vulnerability → top-level [`SECURITY.md`](../../SECURITY.md). What's public vs private →
-> [the boundary page](public-vs-private.md).
+> Reporting a vulnerability → top-level [`SECURITY.md`](../../SECURITY.md). Where your own settings
+> live → [Configuration](../setup/configuration.md#your-own-settings-stay-out-of-the-repo).
 
 ## Loopback-only by default
 
@@ -45,8 +45,8 @@ literal, or a `*.ts.net` name, and when a POST carries an `Origin` that is not
 loopback, not the request's own host, and not the configured `cors_origins`.
 A page on another tailnet name is refused: anyone can publish a `*.ts.net`
 page with Tailscale Funnel. A page served from loopback itself (a local dev
-server on `localhost:3000`, say) counts as loopback and can write. The CLIs
-and the app send no `Origin` and are unaffected.
+server on `localhost:3000`, say) counts as loopback and can write. The `voice-say`
+command line and the app send no `Origin` and are unaffected.
 
 The guard is a browser defence only. The daemon has no authentication: any
 program that reaches its port can read and write everything. On a shared Mac,
@@ -114,42 +114,18 @@ Each render produces **two artefacts**, and each is written durably:
 `voice.db` holds the `renders` table (append-only, including the full `text`),
 the `progress` and `overlays` tables, and the `renders_fts` FTS5 virtual table
 over the transcript. WAL mode gives crash-safe, concurrent-reader durability:
-writes commit atomically and a reader never sees a half-applied row. There is no
-hand-rolled `fcntl` locking layer and no compaction step — SQLite owns the
-write/lock/recovery semantics. A torn or aborted write can never corrupt history
-or playback the way a malformed JSONL line once could.
+writes commit atomically and a reader never sees a half-applied row. SQLite
+owns the write/lock/recovery semantics. A torn or aborted write can never corrupt history
+or playback.
 
-## Tracked-core / private-overlay invariant
+## Nothing personal in the repo
 
-voice-say's **tracked code** is kept clean:
-no secrets and no personal data ever land in tracked files — they live only in
-a private local overlay.
-Concretely:
-
-- **no secrets** and no personal data in tracked code;
-- **generic committed defaults** (e.g. `default_backend=kokoro`,
-  `default_voice=default`, `./data` for the data root) — machine- or
-  person-specific values live only in untracked local config
-  (`config.local.toml`), not in the committed `config.example.toml`;
-- a committed LICENSE and README.
-
-### Readiness gate: `make publishable-check`
-
-A readiness gate enforces the seam before a commit lands. `make
-publishable-check` blocks on any of:
-
-- committed secrets,
-- banned/proprietary terms in tracked files,
-- non-generic defaults leaking into committed config,
-- failing tests,
-- a missing LICENSE or README.
-
-Running the gate is the gate — it is the single mechanical check that the
-tracked core still holds no secrets, cloned voices, or personal data, rather
-than relying on reviewer memory.
-
-> Config layering note: configuration precedence is
-> `env > config.local.toml > config.example.toml`. The config layer is
-> **shipped**; the daemon reads it at boot, only generic defaults are committed,
-> and every value stays overridable by environment variables. The tracked-core
-> seam applies regardless — only generic values are ever committed.
+Committed files carry only generic defaults (`default_backend = kokoro`,
+`default_voice = default`, `./data` for the data root) and no secrets. Your own
+paths, voices and backends live in files git ignores (`config.local.toml`, a
+backend catalog named by `VOICE_SAY_BACKENDS_CONFIG`), and your LaunchAgents in
+`~/Library/LaunchAgents/`; see
+[Configuration](../setup/configuration.md#your-own-settings-stay-out-of-the-repo).
+On the public repository, GitHub secret scanning and push protection catch a
+credential pushed by mistake, and a contribution needs `make test` passing
+(see [CONTRIBUTING.md](../../CONTRIBUTING.md)).

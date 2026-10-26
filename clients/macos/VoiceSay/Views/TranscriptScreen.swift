@@ -8,8 +8,8 @@
 // the StreamingRenderControls bar + render legend over the 3-state transcript.
 // Replaces the inline collapsible transcript in PlayerPanel.
 //
-// Reads transcript text from the already-inline `VoiceEntry.text` — no
-// vault / sidecar / daemon access (UI-only pass).
+// Reads transcript text from the already-inline `VoiceEntry.text` — no file
+// or daemon reads of its own.
 
 import SwiftUI
 import AppKit
@@ -868,9 +868,8 @@ struct TranscriptScreen: View {
     // (statBar above, livePlayer below); the old side-by-side topBar is gone.
     private func statBar(_ mode: ReaderMode) -> some View {
         // Float left with one constant gap + a trailing Spacer — matches the
-        // main screen's HeaderView stat strip (item 9). Plain content-hugging
-        // cells, no boxes. For a finished entry the strings are byte-identical to
-        // before; a live render fills RENDER TIME with "rendering…" (no fake
+        // main screen's HeaderView stat strip. Plain content-hugging cells, no
+        // boxes. A live render fills RENDER TIME with "rendering…" (no fake
         // wall-clock) and derives the rest from the episode.
         let render: (String, String?)
         switch mode {

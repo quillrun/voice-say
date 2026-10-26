@@ -108,7 +108,7 @@ Start at **[docs/README.md](docs/README.md)**, the full index:
 
 ## Contributing & security
 
-- **Contributions:** pull requests and issues are welcome. **[CONTRIBUTING.md](CONTRIBUTING.md)** has the dev setup, the readiness gate and how to add a backend.
+- **Contributions:** pull requests and issues are welcome. **[CONTRIBUTING.md](CONTRIBUTING.md)** has the dev setup, the tests a pull request needs and how to add a backend.
 - **[SECURITY.md](SECURITY.md)** — reporting; trust model in [docs/internals/security.md](docs/internals/security.md).
 
 ## License

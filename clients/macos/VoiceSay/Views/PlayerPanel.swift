@@ -251,8 +251,9 @@ struct PlayerPanel: View {
                 // have their on-disk files. Hard delete (trashEntry)
                 // moves the audio file; resolvedAudioURL returns
                 // nil so the restored row would be unplayable. We still
-                // show restore so legacy soft-deleted overlays can come
-                // back — the play button itself disables on missing audio.
+                // show restore so a soft-deleted row (its overlay marked
+                // deleted while the audio stayed) can come back — the play
+                // button itself disables on missing audio.
                 ctrlButton("arrow.uturn.backward", "restore") { store.restore(entry) }
             } else {
                 let deleting = store.deletingKeys.contains(store.tagKey(for: entry))
@@ -418,7 +419,7 @@ struct PlayerPanel: View {
         // [★] [Tags & Category] on the first line; the applied tags flow on
         // the second row; the "Read transcript" CTA spans the full width on its
         // own bottom row so it reads as a card-level action rather than an
-        // inline utility button — lower-right anchored per the ticket sketch.
+        // inline utility button.
         VStack(alignment: .leading, spacing: Spacing.sm) {
             HStack(spacing: Spacing.sm) {
                 starPill

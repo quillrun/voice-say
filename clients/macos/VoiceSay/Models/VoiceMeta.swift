@@ -2,16 +2,14 @@
 // picker. The daemon's /config exposes only voice *ids* per backend
 // (Backend.voices: [String]); it has no human label, descriptor, gender
 // tint, or sample. This file supplies that presentation layer:
-//   • a curated catalog for the voices we know (ported from the design's
-//     data.js VOICE_META), keyed by voice id, and
+//   • a curated catalog for known voices, keyed by voice id, and
 //   • a graceful derivation for unknown ids (tone from the af_/am_/bf_/bm_
 //     prefix convention, a humanized label, a neutral descriptor).
 //
 // Sample audio: per-voice preview clips are BUNDLED in the .app at
-// Contents/Resources/samples/<voice>.mp3 (copied in by build-app.sh from
-// the VOICE_SAY_SAMPLES overlay). `sampleURL` returns the bundled clip,
-// falling back to a legacy archive copy; the picker's preview stays
-// simulated only when neither exists.
+// Contents/Resources/samples/<voice>.mp3 (copied in by build-app.sh from the
+// VOICE_SAY_SAMPLES directory). `sampleURL` returns the bundled clip, falling
+// back to an archive copy; the picker hides the preview when neither exists.
 
 import Foundation
 
@@ -33,11 +31,10 @@ struct VoiceMeta {
     let sampleSeconds: Double
 
     /// A real per-voice preview clip, if one exists. Prefers the copy
-    /// BUNDLED inside the .app (Contents/Resources/samples/<voice>.mp3) —
-    /// bundled clips are immutable and survive the render-archive churn /
-    /// git-clean that kept wiping the old location. Falls back to the legacy
-    /// archive copy (<archive_root>/_samples/<voice>.mp3) for any voice not
-    /// bundled. nil when neither exists (the picker card shows "no clip").
+    /// BUNDLED inside the .app (Contents/Resources/samples/<voice>.mp3), which
+    /// nothing outside the build can change. Falls back to an archive copy
+    /// (<archive_root>/_samples/<voice>.mp3) for any voice not bundled. nil
+    /// when neither exists (the picker card then has no preview).
     var sampleURL: URL? {
         if let bundled = Bundle.main.url(
             forResource: id, withExtension: "mp3", subdirectory: "samples") {
@@ -51,8 +48,9 @@ struct VoiceMeta {
 }
 
 enum VoiceCatalog {
-    /// Curated entries ported from the design (data.js VOICE_META). Keys are
-    /// real voice ids; unknown ids derive sensible defaults below. (label,
+    /// Curated entries. Keys are real voice ids (Kokoro's, plus the speaker
+    /// names of two other TTS models a catalog may add); unknown ids derive
+    /// sensible defaults below. (label,
     /// descriptor, tone, sampleSeconds)
     private static let curated: [String: (String, String, VoiceTone, Double)] = [
         // kokoro — American English female (af_)
@@ -78,12 +76,12 @@ enum VoiceCatalog {
         "am_puck":    ("Puck",    "playful · bright",      .male,   6),
         "am_santa":   ("Santa",   "jolly · warm",          .male,   6),
         "bf_emma":    ("Emma",    "British · crisp",       .female, 4),
-        // mlx-swift — Qwen3-TTS CustomVoice (English speakers only)
+        // Qwen3-TTS CustomVoice speakers (English only)
         "Aiden":  ("Aiden",  "warm · conversational", .male,   4),
         "Ryan":   ("Ryan",   "deep · steady",         .male,   7),
         "Serena": ("Serena", "calm · poised",         .female, 5),
         "Vivian": ("Vivian", "bright · expressive",   .female, 6),
-        // elevenlabs
+        // ElevenLabs voice names
         "rachel": ("Rachel", "natural · narration", .female, 5),
         "adam":   ("Adam",   "deep · cinematic",    .male,   6),
         "bella":  ("Bella",  "soft · friendly",     .female, 4),

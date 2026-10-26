@@ -70,7 +70,7 @@ def write(ts: str, *, starred: bool | None = None, deleted: bool | None = None,
         raise ValueError("ts required")
     if prev is None:
         prev = read(ts) or {}
-    # Closed-vocabulary enforcement (ADR-0002): only *added* tags are gated;
+    # Closed-vocabulary enforcement (allowed_tags): only *added* tags are gated;
     # removed_tags may name a now-disallowed tag the user is clearing.
     new_tags = _clean_tags(tags) if tags is not None else list(prev.get("tags") or [])
     if tags is not None:

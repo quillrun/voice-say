@@ -29,10 +29,10 @@ struct CommitRow: View {
     let onToggle: () -> Void
     /// Rendering-context row — a paused-draft in the Rendering list. It opens the
     /// details screen on click instead of expanding inline, shows RENDER
-    /// progress rather than playback (R2), and surfaces its resume + reveal
-    /// actions inline (R3). Default false = an ordinary History row, unchanged:
-    /// inline expand, playback progress (the P0 "no row-opens-reader" revert
-    /// stands everywhere EXCEPT this rendering context).
+    /// progress rather than playback, and surfaces its resume + reveal
+    /// actions inline. Default false = an ordinary History row: inline expand,
+    /// playback progress (a row opens the reader only in this rendering
+    /// context).
     var renderingContext: Bool = false
     /// Non-nil only for the pinned card above the list: the loaded track,
     /// labelled "Now Playing" (playing) or "Last Played" (paused). nil for
@@ -136,9 +136,8 @@ struct CommitRow: View {
     }
 
     private var headerLine: some View {
-        // voice ……… date-created. The relative time moved to its own flush-left
-        // row beneath the summary (item 3). Backend shows as the voice's accent
-        // colour (the git hash + model badge were removed).
+        // voice ……… date-created. The relative time sits on its own flush-left
+        // row beneath the summary. Backend shows as the voice's accent colour.
         let accent = Backends.find(id: entry.backend).map { Color(hex: $0.accent) } ?? Tokens.muted
         let voiceLabel = (entry.voice?.isEmpty == false) ? entry.voice! : entry.backend
         return HStack(spacing: Spacing.sm) {
@@ -160,7 +159,7 @@ struct CommitRow: View {
                     .font(.system(size: 11.5, weight: .medium, design: .monospaced))
                     .foregroundStyle(accent)
                 // Model/backend name next to the voice. Skipped when voice was empty
-                // (voiceLabel already IS the backend then — avoids "qwen3 qwen3").
+                // (voiceLabel already IS the backend then — avoids "kokoro kokoro").
                 if entry.voice?.isEmpty == false {
                     Text(entry.backend)
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -277,7 +276,7 @@ struct CommitRow: View {
 
     private var diffstatRow: some View {
         let rowBookmarks = store.bookmarksFor(entry)
-        // Rendering context (R2) shows RENDER progress — how much of the draft
+        // Rendering context shows RENDER progress — how much of the draft
         // has been rendered to audio — in the brand/draft hue. History shows
         // playback progress (accent), turning green once complete.
         let useRenderProgress = renderingContext
@@ -460,7 +459,7 @@ struct CommitRow: View {
         entry.draftRenderedFraction ?? (isComplete ? 1 : 0)
     }
 
-    /// Rendering-context inline actions (R3) — since these rows no longer expand
+    /// Rendering-context inline actions — since these rows don't expand
     /// to a PlayerPanel, surface the two things a paused draft needs right on the
     /// row: Continue render (resume the remaining text) + Show in Finder. Both
     /// self-gate (Continue render only for a resumable draft; Finder only when

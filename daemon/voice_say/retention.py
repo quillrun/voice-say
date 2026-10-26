@@ -1,7 +1,6 @@
 """Retention policy — periodic housekeeping for the voice archive.
 
-One job (the legacy JSONL compaction pass was retired with the SQLite
-migration):
+One job:
 
 1. **Cold-tier audio.** Move completed audio that hasn't been played in
    N days from voice-archive/YYYY/MM/ to voice-archive/.cold/YYYY/MM/.
@@ -19,7 +18,8 @@ Run standalone:
     .venv/bin/python -m voice_say.retention --purge
 
 Triggered by the `local.voicesay.retention` launchd job at 04:00 on the 1st
-of each month. Logs to /tmp/voice-say-retention.{out,err}.log.
+of each month. Logs go where that LaunchAgent's StandardOutPath and
+StandardErrorPath point (~/Library/Logs with the install steps).
 """
 from __future__ import annotations
 
@@ -124,7 +124,7 @@ def _cold_tier_audio(*, cold_days: int, dry_run: bool, purge: bool) -> tuple[int
         else:
             try:
                 # relative_to raises ValueError for a row whose archive_path
-                # lives outside ARCHIVE_ROOT (legacy/cross-machine); catch it
+                # lives outside ARCHIVE_ROOT (a moved or imported library); catch it
                 # so one bad row can't abort the whole retention run.
                 rel = audio.parent.relative_to(engine.ARCHIVE_ROOT)
                 cold_dir = engine.ARCHIVE_ROOT / COLD_TIER_SUBDIR / rel

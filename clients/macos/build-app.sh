@@ -72,11 +72,10 @@ cp "${ICON_PATH}" "${APP_BUNDLE}/Contents/Resources/AppIcon.icns"
 
 printf 'APPL????' > "${APP_BUNDLE}/Contents/PkgInfo"
 
-# Voice samples: bundle the per-voice preview clips INTO the .app so they
-# survive render-archive churn and git-clean. They used to live in the
-# gitignored render archive (<archive_root>/_samples) and kept vanishing.
-# The clip set is supplied out-of-band via VOICE_SAY_SAMPLES (a directory of
-# <voice>.mp3 clips kept outside the repo). No-op if the env is unset.
+# Voice samples: bundle the per-voice preview clips INTO the .app, so they
+# don't depend on the render archive. VOICE_SAY_SAMPLES names a directory of
+# <voice>.mp3 clips kept outside the repo; unset = no bundled clips, and the
+# voice picker shows no preview for voices without one.
 SAMPLES_SRC="${VOICE_SAY_SAMPLES:-}"
 if [[ -n "${SAMPLES_SRC}" && -d "${SAMPLES_SRC}" ]]; then
     SAMPLES_DST="${APP_BUNDLE}/Contents/Resources/samples"

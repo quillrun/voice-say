@@ -169,8 +169,8 @@ async def backend_restart(request: web.Request) -> web.Response:
     """POST /backends/{backend}/restart — `launchctl kickstart -k` on the
     backend's catalog launchd label, then wait for it to answer. Only a catalog
     id is accepted (never a free label), and it refuses while a render runs or
-    waits. The daemon runs it because a sandboxed client (e.g. a coding agent)
-    may POST to loopback but not run launchctl itself."""
+    waits. The daemon runs it so a client that may POST to loopback but cannot
+    run launchctl itself (a sandboxed tool, say) can still restart a backend."""
     bid = request.match_info["backend"]
     backend = engine.BACKENDS.get(bid)
     if backend is None:

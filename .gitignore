@@ -18,9 +18,6 @@ __pycache__/
 
 # Generated runtime data (developer's local files — never check in)
 voice-archive/
-voice-history.jsonl
-voice-progress.jsonl
-voice-overlays.jsonl
 *.tmp
 
 # Cold-tier audio
@@ -49,18 +46,14 @@ _samples/
 DerivedData/
 *.metallib
 
-# Local config overrides (personal settings never get committed)
+# Local config overrides (your own settings never get committed;
+# backends.local.json is covered by *.local.*)
 .env
 .env.local
 *.local.toml
 *.local.*
 data/
 
-# Private backend overlays — e.g. a cloned-voice catalog injected via
-# VOICE_SAY_BACKENDS_CONFIG. Keeps a personal voice (its ids + host) out of the
-# public repo. `backends.local.json` is already covered by `*.local.*`.
-*.private.json
-
 # Local-only model-bypass mock fixtures (pre-existing chunk WAVs replayed when
-# a render carries mock=true). Generated on the dev box, never shipped.
+# a render carries mock=true). Local only, never shipped.
 mock-fixtures/

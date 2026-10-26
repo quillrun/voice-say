@@ -5,7 +5,7 @@ Tailor voice-say without editing code: change voice/backend, tune the say/render
 Everything here is driven by configuration (`config.local.toml` or environment
 variables) and the daemon's HTTP surface. You never need to touch source.
 
-The TOML config layer is shipped. Precedence is environment variables >
+Precedence is environment variables >
 `config.local.toml` > `config.example.toml`. The keys below match `GET /config`,
 which the daemon exposes from its resolved settings.
 
@@ -36,7 +36,7 @@ curl http://127.0.0.1:8890/backends            # configured backends
 curl http://127.0.0.1:8890/voices/kokoro       # voices for one backend
 ```
 
-See [backends.md](./backends.md) for each backend's ports and tradeoffs.
+See [backends.md](./backends.md) for the catalog fields and how to add a backend.
 
 ## Tune the say/render threshold
 
@@ -56,7 +56,7 @@ VOICE_SAY_SAY_THRESHOLD_CHARS=280 make run
 
 ## Use tags
 
-Tags are short labels that help you group and find renders. The daemon uses an **open vocabulary** by default: it accepts any normalized tag, and a tag in use appears in `GET /tags`. Tags are normalized by trimming, lowercasing, and converting spaces to hyphens (`"Daily Notes"` → `"daily-notes"`).
+Tags are short labels that help you group and find renders. The daemon uses an **open vocabulary** by default: it accepts any normalized tag, and a tag in use appears in `GET /tags`. Tags are normalized: lowercased, spaces and underscores turned into hyphens, anything outside `a-z0-9-` dropped, and hyphen runs collapsed and trimmed (`"Daily Notes"` → `"daily-notes"`).
 
 The `voice-say` CLI is stricter on purpose, so a typo does not become a new tag: `voice-say render --tag` and `voice-say set --tag` take only tags already in use (see `voice-say tags`). To coin a new one, use `voice-say render --new-tag=<name>` or `voice-say set <ts> --tag <name> --allow-new-tags`; after that, `--tag=<name>` works.
 
@@ -111,5 +111,4 @@ VOICE_SAY_CORS=http://127.0.0.1:5173 make run
 Only set an origin you control. The `/audio` endpoint has a path-traversal guard, but
 opening CORS widens the daemon's exposure — set the single most specific origin you need.
 
-> CORS support stays dormant by default: it is kept harmless and off, not
-> wired to any shipped surface.
+CORS is off by default; none of the bundled clients needs it.

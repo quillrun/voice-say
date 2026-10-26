@@ -8,8 +8,9 @@ voice-say is local-only TTS (no API keys, no cloud). A single Python
 **aiohttp daemon** at `127.0.0.1:8890` owns the render pipeline. Every client
 surface is a thin proxy onto that daemon:
 
-- a **bash CLI** (`voice-say render`, renders and plays),
-- a **library CLI** (`voice-say`, finds, tags, retitles and deletes),
+- the **`voice-say` command line**: `voice-say render` makes and plays audio
+  (a bash script), and the other subcommands find, tag, retitle and delete
+  library entries (Python, `voice_say.cli`),
 - a **macOS SwiftUI app**.
 
 Backends are pluggable HTTP services that each expose an OpenAI-compatible
@@ -24,7 +25,7 @@ started independently of the daemon:
 The daemon's built-in catalog (`daemon/voice_say/config.py` `DEFAULT_BACKENDS`) ships the one
 `kokoro` entry; it is overridden wholesale via `VOICE_SAY_BACKENDS_CONFIG`
 (a JSON file) to point at the live catalog on a given machine — see
-[the public/private boundary](public-vs-private.md) and [backends.md](../setup/backends.md).
+[Configuration](../setup/configuration.md#your-own-settings-stay-out-of-the-repo) and [backends.md](../setup/backends.md).
 
 Generic defaults: `default_backend = kokoro`, `default_voice = default`.
 
@@ -33,8 +34,8 @@ Generic defaults: `default_backend = kokoro`, `default_voice = default`.
 ```mermaid
 flowchart LR
   subgraph clients [Clients]
-    cli[bash CLI 'voice-say render']
-    lib[library CLI 'voice-say']
+    cli['voice-say render']
+    lib['voice-say history / search / set ...']
     app[macOS SwiftUI app]
   end
 
@@ -53,12 +54,14 @@ flowchart LR
   daemon -->|POST /v1/audio/speech| other
   cli -.->|--fast: stream:true, no archive| backends
 
-  daemon -.->|SSE: snapshot then render/progress/overlay| clients
+  daemon -.->|SSE: snapshot then render/progress/overlay| app
 ```
 
-The daemon is the only writer of on-disk artefacts. Clients never touch the
-filesystem; they read render history and live updates back over Server-Sent
-Events (see [sse-and-state.md](sse-and-state.md)).
+The daemon is the only writer of the archive and `voice.db`. Clients read render
+history over HTTP and live updates over Server-Sent Events (see
+[sse-and-state.md](sse-and-state.md)); to play a render, the app and
+`voice-say render` read the audio file the daemon wrote, by its path or through
+`GET /audio/{ts}`.
 
 ## The `engine.render()` pipeline (4 steps)
 
@@ -71,7 +74,7 @@ flowchart TD
   v[validate: text shape, backend, normalize tags,
     strip bracket tags for non-emotion backends] --> s1
   s1[1 - TTS POST to backend
-     serialized per-backend semaphore] --> s2
+     under the render gate] --> s2
   s2[2 - atomic archive write
      tmp + rename - probe duration] --> s3
   s3[3 - classify kind + insert renders row
@@ -84,9 +87,9 @@ flowchart TD
 1. **TTS POST.** The text is sent to the chosen backend's `/v1/audio/speech`
    under the render gate (`engine._RenderGate`), two FIFO locks:
    - **tts lock per concurrency key** — one backend request at a time per key.
-     All loopback backends share `__local__` (one heavy model resident on a
-     16 GB box); a remote worker has its own key, so different boxes render
-     concurrently.
+     All backends on this machine share `__local__` (one model working at a
+     time, so two never compete for memory); a backend on another host has its
+     own key, so it renders in parallel with the local ones.
    - **episode lock** — one longform render (sequential, stream or resume) at a
      time, so the client's single streaming view is never shared.
 
@@ -135,11 +138,11 @@ The chunk ceiling is **per-backend**, not a fixed 1200. The module default is
 `LONGFORM_CHUNK_MAX = 1200` (`engine.py`), used only when a backend doesn't
 override it; each backend can set `longform_chunk_max` in the backends catalog
 and `Backend.chunk_max` resolves the effective value (`self.longform_chunk_max
-or LONGFORM_CHUNK_MAX`). A backend that stitches long input itself can set a
-much larger value (e.g. 12500 for whole-module POSTs, with retry-on-short and
-stitching inside the backend). Backends with built-in cross-chunk continuity can render longer
-chunks with fewer daemon-level seams. The 40-chunk cap is config-driven
-(`LONGFORM_MAX_CHUNKS`, default 40) — a self-DoS guard on the HTTP surface.
+or LONGFORM_CHUNK_MAX`). A backend that keeps continuity across long input itself
+can set a much larger value and render longer chunks with fewer daemon-level
+seams. The 40-chunk cap is config-driven
+(`longform_max_chunks`, default 40) — a guard against one request tying up the
+daemon.
 
 #### Final-chunk-tail preservation
 
@@ -150,9 +153,9 @@ natural tail** (no trailing trim). The last chunk has no following seam, so
 trimming its trailing silence would clip the last word's soft decay (a quiet
 final consonant/vowel below the silence threshold) — the "last word cut
 abruptly" bug. This last-chunk exception applies in both paths: the live
-streaming chunks (`engine.py`, `trim_chunk_silence_inplace(trailing=not
-is_last_chunk)`) and the archive concat (`_sinks.py`, `_trim_chunk_silence(...,
-trailing=(i != last_idx))`).
+streaming chunks (`engine.py` calls `_sinks.trim_chunk_silence_inplace` with `trailing` off
+for the last chunk) and the archive concat (`_sinks.concat_wavs_to_mp3`, through
+`_trim_chunk_silence`).
 
 A streaming episode can be finalized early (save-and-stop), which tags the row
 `"draft"` and persists a resume boundary (`resume_full_text` /
@@ -185,11 +188,13 @@ _routes_render.py  POST /render, POST /render_longform,
                    POST /episode/{id}/force_finalize,
                    POST /episode/resume
                    (body validation -> engine.render / engine.render_longform)
-_routes_meta.py    GET /backends, /voices/{id}, /tags, /config, /health,
-                   POST /config, POST /playback/active
+_routes_meta.py    GET /backends, /voices/{id}, /tags, /stats, /config,
+                   /health, POST /config, POST /playback/active,
+                   POST /backends/{id}/restart
 _routes_history.py GET /history, GET /search (FTS5 over transcripts),
                    GET+POST /progress/{ts}, /overlays/{ts},
-                   GET /audio/{ts} (path-traversal guarded), POST /reload
+                   GET /audio/{ts} (path-traversal guarded), POST /reload,
+                   POST /align/{ts}
 
 _validators.py     request-shape helpers (JSON parse, error envelope,
                    stage->status map, typed list/bool/number coercion)
@@ -216,8 +221,9 @@ The reason is the render gate: two gates in two processes are not one gate,
 and a second process holding the database open would be a second writer.
 The HTTP hop is cheap; the safety guarantee is not.
 
-Its commands are `health`, `history`, `search`, `tags`, `voices` and `set`
-(per-entry title / star / delete / tags / series / episode). Rendering and
+Its commands are `health`, `history`, `search`, `tags`, `voices`, `set`
+(per-entry title / star / delete / tags / series / episode), `restart` (a
+backend's launchd service) and `align` (word timings for the reader). Rendering and
 playback stay with `voice-say render`. Playback state (progress, bookmarks) is
 intentionally absent — scripts have no business mutating it. Two rules are
 checked client-side before any write: `set` validates tags against
@@ -233,38 +239,41 @@ archive.
 
 Every table write goes through `_db.py` inside the daemon process:
 
-- **renders** — `insert_render()` (`_db.py:197`): append-only, never
+- **renders** — `_db.insert_render()`: append-only, never
   UPDATE/DELETE. Called by `engine.render()` and `engine.render_longform()`
   after a successful TTS + archive write. This is the only path that creates a
   renders row.
-- **progress** — `upsert_progress()` (`_db.py:287`): latest-wins UPSERT,
+- **progress** — `_db.upsert_progress()`: latest-wins UPSERT,
   called by the daemon's `/progress/<ts>` POST handler.
-- **overlays** — `upsert_overlay()` (`_db.py:332`): latest-wins UPSERT,
-  called by the daemon's `/overlays/<ts>` POST handler (`_routes_history.py:91`).
+- **overlays** — `_db.upsert_overlay()`: latest-wins UPSERT,
+  called by the daemon's `/overlays/<ts>` POST handler
+  (`_routes_history.overlays_post`).
 
-No client process opens `voice.db` directly. The macOS app carries Desktop
-folder TCC permission (so macOS grants access to the folder the DB lives in),
-but it never issues a sqlite3 call — every read goes through `/history` and
-`/events` SSE (verified: no sqlite3/GRDB import anywhere under
-`clients/macos/VoiceSay/`).
+No client process opens `voice.db` directly. The macOS app asks for Desktop or
+Documents folder access only to play audio files from an archive kept there; it
+has no SQLite code, and every read goes through `/history` and the `/events`
+SSE stream.
 
 ### The macOS app is an HTTP + SSE client that POSTs overlays
 
 The app communicates exclusively through `DaemonClient` (`Services/DaemonClient.swift`),
-a URLSession wrapper pointed at `http://127.0.0.1:8890`
-(`DaemonClient.swift:42`). Its write surface is:
+a URLSession wrapper pointed at `http://127.0.0.1:8890` (or the
+`voicesay.daemonURL` override). Its write surface is:
 
-- **Render** — `POST /render_longform` (`DaemonClient.swift:81`): submits
+- **Render** — `POST /render_longform` (`renderLongform`): submits
   text + backend/voice params; the daemon owns the full TTS + archive + DB
   pipeline.
-- **Overlays** — `POST /overlays/<ts>` (`DaemonClient.swift:98`): stars,
-  soft-deletes, tags, bookmarks, and display title. This is the only
-  mutable field the app can write; it routes through the daemon's
-  `overlays_post` handler (`_routes_history.py:91`) which calls
+- **Overlays** — `POST /overlays/<ts>` (`postOverlay`): stars,
+  soft-deletes, tags, bookmarks, and display title. It routes through the daemon's
+  `overlays_post` handler (`_routes_history.py`), which calls
   `_db.upsert_overlay()`.
-- **Progress** — `POST /progress/<ts>` (`DaemonClient.swift:90`): playback
+- **Progress** — `POST /progress/<ts>` (`postProgress`): playback
   position ticks. Routes to `_db.upsert_progress()` via the daemon.
-- **Config** — `POST /config`: daemon-side default backend/voice. Reads back
+- **Episodes** — `POST /episode/{id}/cancel`, `/finalize`, `/force_finalize`
+  and `POST /episode/resume`: stop, save or continue a streaming render.
+- **Playback** — `POST /playback/active` (`announcePlaybackActive`), so other
+  clients pause.
+- **Config** — `POST /config` (`setConfig`): daemon-side default backend/voice. Reads back
   via `GET /config`.
 
 The app never writes to the audio archive tree.
@@ -287,10 +296,10 @@ anything. Progress and bookmark mutations are absent from the CLI.
 ### The CLI is an HTTP client
 
 `cli/voice-say-render` (run as `voice-say render`) is a bash script. It resolves text → JSON payload, then does one
-`curl POST` to `$VOICE_SAY_URL/render` or `/render_longform`. It
-has no sqlite3 dependency and no filesystem writes beyond the mpv playback temp
-copy. Title writes go through a second `POST /overlays/<ts>` call after the
-render succeeds (older daemons only), routing through the daemon's overlay handler.
+`curl POST` to `$VOICE_SAY_DAEMON_URL/render` or `/render_longform`. It
+has no sqlite3 dependency and no filesystem writes beyond the copy it plays
+(and `--out`). Title, series and episode ride on that render request; the
+daemon writes them through its overlay handler.
 
 ### Contract summary
 
@@ -299,6 +308,6 @@ render succeeds (older daemons only), routing through the daemon's overlay handl
 | Daemon (`_db.py`) | ALL — sole writer | owns handler | yes — WAL, `_lock` guard |
 | macOS app | none | via HTTP POST `/overlays/<ts>` | no |
 | CLI (`voice-say`) | none | via HTTP POST `/overlays/<ts>` (`set`) | no |
-| CLI (`voice-say render`) | none | via HTTP POST `/overlays/<ts>` | no |
+| CLI (`voice-say render`) | none | none (title, series, episode ride on the render request) | no |
 
 Nobody except the daemon process opens `voice.db` for writes.

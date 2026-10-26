@@ -16,7 +16,7 @@ it does NOT go through the daemon archive / voice.db. Use plain
 assembled wav locally.
 
 Args: --backend=<id>, --voice=<id>, --no-play, --bg, --out=<path.wav>
-Env:  VOICE_SAY_DAEMON_URL (old name SAY_MCP_DAEMON_URL)
+Env:  VOICE_SAY_DAEMON_URL
 """
 import json
 import os
@@ -47,8 +47,7 @@ def _user_tmp() -> str:
 
 RUN_DIR = _user_tmp()
 MPV_SOCK = os.path.join(RUN_DIR, "voice-mpv.sock")
-DAEMON = (os.environ.get("VOICE_SAY_DAEMON_URL") or os.environ.get("SAY_MCP_DAEMON_URL")
-          or "http://127.0.0.1:8890")
+DAEMON = os.environ.get("VOICE_SAY_DAEMON_URL") or "http://127.0.0.1:8890"
 
 
 def resolve_backend(backend_id: str) -> dict:

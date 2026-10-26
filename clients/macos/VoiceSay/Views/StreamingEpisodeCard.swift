@@ -327,7 +327,7 @@ struct StreamingPlayButton: View {
 private func mockStreamingEpisode(total: Int, rendered: Int, titled: Bool = true) -> StreamingEpisode {
     let text = "The attention mechanism, from scratch. We start with a single query and a handful of keys."
     let ep = StreamingEpisode(id: "preview", predictedTotalS: 90, totalChunks: total,
-                              chars: 16_472, backend: "qwen3", voice: "af_alloy", fullText: text,
+                              chars: 16_472, backend: "kokoro", voice: "af_heart", fullText: text,
                               title: titled ? "Attention from Scratch" : nil,
                               series: titled ? "Series A" : nil,
                               episodeNumber: titled ? 181 : nil)

@@ -29,24 +29,16 @@ for tool in voice-say voice-ctl; do
     exit 1
   fi
   chmod +x "$src"
-  # Don't clobber a real `voice-say` file the operator placed here — if the
-  # target exists, is a regular file (not our symlink), and differs from ours,
-  # it's a local wrapper (personal defaults). Leave it. voice-ctl is unaffected.
+  # Don't clobber a real `voice-say` file you placed here — if the target
+  # exists, is a regular file (not our symlink), and differs from ours, it's a
+  # local wrapper (your own defaults). Leave it. voice-ctl is unaffected.
   if [ "$tool" = "voice-say" ] && [ -f "$dst" ] && [ ! -L "$dst" ] && ! cmp -s "$src" "$dst"; then
-    echo "NOTE: $dst is a regular file that differs from $src — leaving it (operator wrapper). Skipping relink." >&2
+    echo "NOTE: $dst is a regular file that differs from $src — leaving it (local wrapper). Skipping relink." >&2
     continue
   fi
   ln -sfn "$src" "$dst"
   echo "linked: $dst -> $src"
 done
-
-# Earlier versions linked a `say` here, which shadowed macOS /usr/bin/say.
-# Remove that link if it points into this repo; a file of your own stays.
-old="$PREFIX/say"
-if [ -L "$old" ] && [ "$(readlink "$old")" = "$HERE/say" ]; then
-  rm "$old"
-  echo "removed: $old (was voice-say's old name; /usr/bin/say is visible again)"
-fi
 
 case ":$PATH:" in
   *":$PREFIX:"*) ;;

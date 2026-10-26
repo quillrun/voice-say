@@ -7,9 +7,7 @@
 // form); persisted to UserDefaults.
 //
 // Color is stored as a 6-digit "rrggbb" hex string chosen from the system color
-// picker — a FREE color, not a fixed palette. v1 stored a palette INDEX into a
-// fixed 8-swatch palette; on the first v2 load we migrate those indices to the
-// equivalent hex so existing overrides survive the picker switch.
+// picker — a FREE color, not a fixed palette.
 
 import SwiftUI
 import Observation

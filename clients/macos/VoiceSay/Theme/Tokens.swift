@@ -190,8 +190,8 @@ extension Color {
 }
 
 extension VoiceTone {
-    /// Avatar tint — mirrors the design's gender/style tinting
-    /// (F → rose, M → sky, neutral → muted). Lives in Theme, not on the
+    /// Avatar tint by tone (F → rose, M → sky, neutral → muted). Lives in
+    /// Theme, not on the
     /// model: VoiceTone itself stays presentation-free.
     var tint: Color {
         switch self {

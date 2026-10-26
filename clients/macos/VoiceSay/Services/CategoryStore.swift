@@ -82,9 +82,9 @@ final class CategoryStore {
 
     /// Every token by which a persisted/user category can be recognized as
     /// colliding with a built-in: each built-in's id, its backing tag (if any),
-    /// and the normalized form of its display name. Used to absorb a stale
-    /// persisted "drafts"/"Drafts" (id/tag plural) into the built-in "Drafts"
-    /// (id "draft"), and to reject a user re-creating a built-in by name.
+    /// and the normalized form of its display name. Used to strip a persisted
+    /// category that aliases a built-in (the retired Drafts included), and to
+    /// reject a user re-creating a built-in by name.
     static let builtinReservedTokens: Set<String> = {
         var tokens: Set<String> = []
         // Include `retired` so a stale persisted Drafts category is recognized
@@ -128,10 +128,9 @@ final class CategoryStore {
         // dropping the user's own tag-backed categories.
         //
         // Strip not just exact-id matches but anything that *aliases* a
-        // built-in by id, backing tag, or normalized name. This absorbs a
-        // stale persisted "drafts"/"Drafts" (user category, id/tag plural)
-        // into the canonical built-in "Drafts" (id "draft") instead of
-        // showing both — the duplicate-Drafts bug.
+        // built-in by id, backing tag, or normalized name, so a persisted
+        // "drafts"/"Drafts" category (from before Drafts was retired) goes
+        // instead of showing beside the Rendering bucket that replaced it.
         categories.removeAll { Self.collidesWithBuiltin($0) }
         categories.insert(contentsOf: Self.builtins, at: 0)
         persist()
@@ -162,7 +161,7 @@ final class CategoryStore {
         // live built-in's id/tag/normalized-name OR a retired token (e.g.
         // "draft"). Hand back the matching LIVE built-in, or nil to REJECT a
         // retired token that has no live built-in — otherwise the optional bind
-        // would fail and fall through to spawn a phantom "draft" row (R5).
+        // would fail and fall through to spawn a phantom "draft" row.
         if Self.builtinReservedTokens.contains(tag) {
             return Self.builtins.first(where: {
                 $0.id == tag || $0.tag == tag || Self.normalizedTag($0.name) == tag

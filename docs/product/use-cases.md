@@ -4,7 +4,7 @@ Concrete ways people put voice-say to work, all running locally on their own mac
 
 ## Narrating notes and articles to audio
 
-You have a long note, a saved article, or a draft you would rather listen to than read. Pipe it to voice-say and it renders the whole thing to an audio file you can play immediately or replay later from your render history. The full transcript is stored alongside every render in the local `voice.db` store — so the spoken version and the written version stay paired, and you can search across every transcript later. The audio lives in your own archive in an open format, ready to move onto a phone or a podcast app for offline listening.
+You have a long note, a saved article, or a draft you would rather listen to than read. Hand the file to `voice-say render --file` and it renders the whole thing to an audio file you can play immediately or replay later from your render history. The full transcript is stored alongside every render in the local `voice.db` store — so the spoken version and the written version stay paired, and you can search across every transcript later. The audio lives in your own archive in an open format, ready to move onto a phone or a podcast app for offline listening.
 
 ```bash
 voice-say render --file=./notes/article.md --title="Article"

@@ -6,7 +6,7 @@
 // Sample preview plays a real per-voice clip (VoiceMeta.sampleURL: bundled
 // into the .app by build-app.sh from VOICE_SAY_SAMPLES, else
 // <archive_root>/_samples) through its own SamplePreviewPlayer, so it never
-// disturbs the shared AudioPlayer. A voice without a clip shows "no clip".
+// disturbs the shared AudioPlayer. A voice without a clip has no preview row.
 
 import SwiftUI
 
@@ -136,7 +136,7 @@ struct VoicePickerSheet: View {
                 Text(meta.descriptor).font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(Tokens.muted)
                     .lineLimit(2).truncationMode(.tail)
-                preview(v, meta)
+                if let sample = meta.sampleURL { preview(v, meta, sample: sample) }
             }
             .padding(Spacing.md)
             .background(selected ? Tokens.accentSoft : Tokens.bg2.opacity(0.4))
@@ -187,26 +187,24 @@ struct VoicePickerSheet: View {
         .frame(width: 20, height: 20)
     }
 
-    private func preview(_ v: String, _ meta: VoiceMeta) -> some View {
+    private func preview(_ v: String, _ meta: VoiceMeta, sample: URL) -> some View {
         let playing = samplePlayer.playingVoice == v
-        let hasSample = meta.sampleURL != nil
         let bars = WaveformSynth.peaks(seed: v, count: 28)
         let prog = playing ? samplePlayer.progress : 0
         let filled = Int(Double(bars.count) * prog)
         return HStack(spacing: Spacing.md) {
-            Button(action: { togglePreview(v) }) {
+            Button(action: { togglePreview(v, sample) }) {
                 ZStack {
-                    Circle().fill(playing || !hasSample ? Tokens.bg2 : Tokens.accent)
-                        .overlay(Circle().stroke(playing || !hasSample ? Tokens.borderStrong : Color.clear, lineWidth: 1))
+                    Circle().fill(playing ? Tokens.bg2 : Tokens.accent)
+                        .overlay(Circle().stroke(playing ? Tokens.borderStrong : Color.clear, lineWidth: 1))
                         .frame(width: 30, height: 30)
                     Image(systemName: playing ? "pause.fill" : "play.fill")
                         .font(.system(size: 11))
-                        .foregroundStyle(playing ? Tokens.accent : (hasSample ? Tokens.bg : Tokens.ultraDim))
+                        .foregroundStyle(playing ? Tokens.accent : Tokens.bg)
                 }
             }
             .buttonStyle(.plain)
-            .disabled(!hasSample)
-            .help(hasSample ? "Play sample" : "No sample clip for this voice yet")
+            .help(playing ? "Stop sample" : "Play sample")
             GeometryReader { geo in
                 HStack(spacing: Spacing.xxs) {
                     ForEach(0..<bars.count, id: \.self) { i in
@@ -219,8 +217,7 @@ struct VoicePickerSheet: View {
                 .frame(maxHeight: .infinity, alignment: .center)
             }
             .frame(height: 26)
-            .opacity(hasSample ? 1 : 0.4)
-            Text(hasSample ? fmtDuration(Int((playing ? samplePlayer.remainingS : meta.sampleSeconds).rounded())) : "no clip")
+            Text(fmtDuration(Int((playing ? samplePlayer.remainingS : meta.sampleSeconds).rounded())))
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(Tokens.dim).frame(width: 40, alignment: .trailing)
         }
@@ -228,7 +225,8 @@ struct VoicePickerSheet: View {
 
     private var footer: some View {
         HStack(spacing: Spacing.md) {
-            Text("\(voices.count) voices · \(displayBackendLabel)")
+            Text(displayBackendLabel.isEmpty ? "\(voices.count) voices"
+                                             : "\(voices.count) voices · \(displayBackendLabel)")
                 .font(.system(size: 11, design: .monospaced)).foregroundStyle(Tokens.ultraDim)
                 .lineLimit(1).truncationMode(.tail)
             Spacer()
@@ -257,13 +255,10 @@ struct VoicePickerSheet: View {
         currentBackend?.compactLabel ?? ""
     }
 
-    // Plays the FIXED per-voice sample clip — the same audio file every time,
-    // at <archive_root>/_samples/<voice>.mp3 (produced out-of-band by the
-    // samples track, NOT rendered on the spot). No-op for a voice whose clip
-    // doesn't exist yet (its play button is disabled).
-    private func togglePreview(_ v: String) {
+    // Plays the voice's fixed sample clip (VoiceMeta.sampleURL), the same
+    // file every time: a clip made ahead of time, not rendered on the spot.
+    private func togglePreview(_ v: String, _ url: URL) {
         if samplePlayer.playingVoice == v { samplePlayer.stop(); return }
-        guard let url = VoiceCatalog.meta(for: v).sampleURL else { return }
         samplePlayer.play(url: url, voice: v)
     }
 

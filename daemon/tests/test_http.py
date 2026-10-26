@@ -162,7 +162,6 @@ def writable_config(tmp_path, monkeypatch):
     monkeypatch.setenv("VOICE_SAY_CONFIG", str(cfgfile))
     for name in ("DEFAULT_BACKEND", "DEFAULT_VOICE"):
         monkeypatch.delenv(f"VOICE_SAY_{name}", raising=False)
-        monkeypatch.delenv(f"SAY_MCP_{name}", raising=False)
     orig = (cfg.DEFAULT_BACKEND, cfg.DEFAULT_VOICE, cfg._FILE)
     cfg.reload()
     yield cfgfile
@@ -189,7 +188,7 @@ async def test_config_post_unknown_backend_400(client, writable_config):
 
 async def test_config_post_unadvertised_voice_accepted(client, writable_config):
     # Voice is NOT validated against the advertised list — /render passes it
-    # through, so a cloned voice not in the generic catalog is allowed.
+    # through, so a voice not in the catalog is allowed.
     r = await client.post("/config", json={
         "default_backend": "tts-a", "default_voice": "my_clone"})
     assert r.status == 200
@@ -467,9 +466,9 @@ async def test_search_endpoint_returns_fts_hits(client, isolated_paths):
 
 async def test_audio_endpoint_streams_bytes_for_known_ts(client, isolated_paths, tmp_path):
     """GET /audio/{ts} resolves a cached entry's archive_path and streams
-    the file with the right mime type. This is what the MCP audio://
-    resource calls now (post-2026-05-27); remote MCP clients no longer
-    need disk co-location."""
+    the file with the right mime type, so a client on another machine can
+    fetch the audio (voice-say render uses it when the archive path isn't
+    local)."""
     audio_bytes = b"\xff\xfb\x90\x00" + b"\x00" * 256
     # File must live inside ARCHIVE_ROOT to pass the path-traversal guard.
     archive_subdir = isolated_paths["archive"] / "2026" / "05"

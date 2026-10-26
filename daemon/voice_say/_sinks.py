@@ -209,7 +209,7 @@ def probe_duration_s(path: Path, fmt: str = "mp3") -> float:
     """Mutagen-based duration probe. WAV reads via
     `mutagen.wave.WAVE`; everything else via `mutagen.mp3.MP3`. Returns
     0.0 on any failure; VoiceSay's `POST /progress/<ts>` with explicit
-    duration is the fallback path for legacy / unprobeable files."""
+    duration is the fallback for unprobeable files."""
     try:
         if fmt == "wav":
             from mutagen.wave import WAVE
@@ -289,7 +289,7 @@ def _probe_sample_rate(path: Path) -> int | None:
 
 # Inter-chunk seam control. Each long-form chunk is generated independently and
 # carries its own leading silence (~160 ms) AND a long trailing silence
-# (~480 ms — the clone model emits a generous tail). Concatenated raw, every
+# (~480 ms on some models, which emit a long tail). Concatenated raw, every
 # seam is (prev chunk's trailing + next chunk's leading) ≈ 400-640 ms of
 # dead-air. Before the concat we trim BOTH ends of each chunk down to a short
 # lead-in and a natural sentence-pause tail, so the seam is a uniform ~210 ms
@@ -486,8 +486,8 @@ def concat_wavs_to_mp3(wav_paths: list[Path], out_stem: str) -> Path:
     then each seam is padded with room tone to a ~530 ms paragraph pause
     (see _seam_pad).
 
-    The backends emit 24 kHz mono; assert the sample rates agree
-    so a backend/voice mismatch surfaces as a clear error instead of
+    Kokoro emits 24 kHz mono and other backends may differ; assert the
+    chunks' sample rates agree so a backend/voice mismatch surfaces as a clear error instead of
     silent pitch/speed corruption from ffmpeg's implicit resample.
 
     Returns the final mp3 path in the dated archive tree.

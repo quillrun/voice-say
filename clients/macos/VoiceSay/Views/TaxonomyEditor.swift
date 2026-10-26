@@ -89,11 +89,10 @@ struct TaxonomyEditor: View {
             Text("\(staged.count) applied").font(.system(size: 11, design: .monospaced)).foregroundStyle(Tokens.ultraDim)
             Spacer()
             // Always enabled — save() applies the staged/original diff (a
-            // no-op when unchanged) and closes. The greyed .disabled gate
-            // previously stranded a valid edit when the baseline snapshot raced
-            // (item 7). The half-opacity "unchanged" dim read as a DISABLED save
-            // button — the label now switches Save/Done instead, at full accent
-            // either way.
+            // no-op when unchanged) and closes. A .disabled gate can strand a
+            // valid edit when the baseline snapshot races, and a dimmed button
+            // reads as disabled, so the label switches Save/Done instead, at
+            // full accent either way.
             Button(action: { save() }) {
                 Text(edited ? "Save" : "Done")
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))

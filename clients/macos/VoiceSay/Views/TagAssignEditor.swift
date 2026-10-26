@@ -70,9 +70,9 @@ enum TagAssignCore {
     /// user can create from this window: non-empty, not already a tag (in use
     /// or declared), and not a category's backing tag. Mirrors TaxonomyEditor's
     /// create-eligibility so the per-render assign window is symmetric with the
-    /// compose/manage surfaces. Tag creation is a USER affordance — the
-    /// closed-vocabulary restriction is the MCP `set_overlays` path's concern,
-    /// not the app's.
+    /// compose/manage surfaces. The daemon's `allowed_tags`, when set, is not
+    /// checked here: the daemon refuses a tag outside it, and the write's
+    /// error ("tag(s) not in allowed_tags: …") reaches the user.
     nonisolated static func canCreateTag(normalizedQuery: String,
                                          universe: [String],
                                          declared: [String],

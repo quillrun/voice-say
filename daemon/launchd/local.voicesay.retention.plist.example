@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Monthly retention job: cold-tiers completed audio unplayed for 180+
-     days and compacts the progress + overlays JSONLs.
+<!-- Monthly retention job: moves completed audio unplayed for 180+ days
+     into voice-archive/.cold/ (starred and bookmarked entries stay).
 
 Install: same shape as local.voicesay.daemon.plist.example — substitute
 __PYTHON__, __WORKDIR__ and __LOGDIR__, copy into ~/Library/LaunchAgents/.

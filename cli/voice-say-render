@@ -5,7 +5,7 @@
 #
 #   voice-say render "a sentence"                      render + play
 #   voice-say render --file=/tmp/x.txt --title="…"     anything longer (no shell quoting)
-#   voice-say render --no-play … / --out=/path.mp3     save without playing / keep a copy
+#   voice-say render --no-play … / --out=/path.wav     save without playing / keep a copy
 #   voice-say render --json …                          one JSON line on stdout (for scripts)
 #   voice-say render --fast "quick reply" [--wait]     instant, streamed, unarchived
 #   voice-say render --stop | --toggle | --seek=±N     control playback (= voice-ctl)
@@ -13,7 +13,9 @@
 # Flags: --title=<3–8 words> | --title-from=<file.md> (its first "# " heading);
 #   --series=<name> --episode=<n>; --tag=<name> (repeatable, existing tags only;
 #   --new-tag=<name> coins one on purpose); --voice=<id>; --backend=<id>;
-#   --stream (force the chunked path); --speed=<f>; --format=<mp3|wav>;
+#   --stream (force the chunked path); --speed=<f>;
+#   --out=<path>: a copy of the audio; its extension follows what the backend
+#   made (.wav or .mp3), and a different one is replaced with a warning;
 #   --json: stdout is one object {id, path, out, title, duration_s, backend,
 #   voice, kind, playing}, the other lines go to stderr (not with --fast).
 #   A value flag also takes its value as the next word: --file notes.txt.
@@ -65,13 +67,10 @@ VOICE_CTL="$(dirname "$0")/voice-ctl"
 [ -x "$VOICE_CTL" ] || VOICE_CTL="$(command -v voice-ctl || echo "$HOME/.local/bin/voice-ctl")"
 
 # Env: VOICE_SAY_RENDER_{BACKEND,VOICE,TIMEOUT,STREAM_THRESHOLD,TITLE_THRESHOLD,FAST_BACKEND},
-# VOICE_SAY_DAEMON_URL. The pre-2026-10-26 names (SAY_DEFAULT_BACKEND,
-# SAY_DEFAULT_VOICE, SAY_TIMEOUT, SAY_STREAM_THRESHOLD, SAY_TITLE_THRESHOLD,
-# SAY_MCP_DAEMON_URL) are read when the new one is unset.
-BACKEND="${VOICE_SAY_RENDER_BACKEND:-${SAY_DEFAULT_BACKEND:-}}"     # empty = the daemon's default_backend
-VOICE="${VOICE_SAY_RENDER_VOICE:-${SAY_DEFAULT_VOICE:-default}}"  # "default" = let the backend pick
+# VOICE_SAY_DAEMON_URL.
+BACKEND="${VOICE_SAY_RENDER_BACKEND:-}"     # empty = the daemon's default_backend
+VOICE="${VOICE_SAY_RENDER_VOICE:-default}"  # "default" = let the backend pick
 SPEED="1.0"
-FORMAT="mp3"
 PLAY=1
 JSON=0
 WAIT=0          # --wait: with --fast, play in the FOREGROUND and block until playback ends
@@ -87,14 +86,14 @@ SEEK_AMOUNT=""
 TAGS=()
 NEW_TAGS=()     # --new-tag: coined on purpose, skipped by the vocabulary check
 STREAM=0
-STREAM_THRESHOLD="${VOICE_SAY_RENDER_STREAM_THRESHOLD:-${SAY_STREAM_THRESHOLD:-1200}}"
+STREAM_THRESHOLD="${VOICE_SAY_RENDER_STREAM_THRESHOLD:-1200}"
 
 # A value flag also takes its value as the next word (--file notes.txt): that
 # form is rewritten to --flag=value so the parser below sees one shape.
 ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --backend|--voice|--speed|--format|--out|--file|--title|--title-from|--series|--episode|--seek|--tag|--new-tag)
+    --backend|--voice|--speed|--out|--file|--title|--title-from|--series|--episode|--seek|--tag|--new-tag)
       [ $# -ge 2 ] || { echo "ERR: $1 needs a value ($1=<value> or $1 <value>)" >&2; exit 4; }
       ARGS+=("$1=$2"); shift 2 ;;
     *) ARGS+=("$1"); shift ;;
@@ -108,7 +107,6 @@ for arg in "$@"; do
     --fast)      FAST=1 ;;  # stream from the fast backend, unarchived; explicit --backend= wins
     --voice=*)   VOICE="${arg#*=}"; VOICE_EXPLICIT=1 ;;
     --speed=*)   SPEED="${arg#*=}" ;;
-    --format=*)  FORMAT="${arg#*=}"; FORMAT_EXPLICIT=1 ;;
     --out=*)     OUT="${arg#*=}" ;;
     --file=*)    FILE="${arg#*=}" ;;
     --title=*)      TITLE="${arg#*=}" ;;       # library title, sent with the render
@@ -161,7 +159,9 @@ case "$EPISODE" in
   ""|*[!0-9]*) [ -n "$EPISODE" ] && { echo "ERR: --episode=$EPISODE must be a whole number >= 0" >&2; exit 4; } ;;
 esac
 
-[ -z "$OUT" ] && { OUT="$RUN_DIR/voice-$(date +%Y%m%d-%H%M%S).$FORMAT"; OUT_DEFAULT=1; }
+# The default copy is named .wav, which is what --fast writes; a daemon render
+# renames it to the archive's extension below.
+[ -z "$OUT" ] && { OUT="$RUN_DIR/voice-$(date +%Y%m%d-%H%M%S).wav"; OUT_DEFAULT=1; }
 
 if [ "$SPEED" != "1.0" ]; then
   echo "WARN: --speed=$SPEED may be ignored by ${BACKEND:-the default backend}" >&2
@@ -179,9 +179,9 @@ if [ -z "$TEXT" ]; then
 fi
 
 # [emotion] tags pass through: the daemon strips them for backends without
-# emotion support (supports_emotion_tags in backends.json).
+# emotion support (supports_emotion_tags in the backend's catalog entry).
 
-DAEMON_URL="${VOICE_SAY_DAEMON_URL:-${SAY_MCP_DAEMON_URL:-http://127.0.0.1:8890}}"
+DAEMON_URL="${VOICE_SAY_DAEMON_URL:-http://127.0.0.1:8890}"
 
 USER_TAGS_JSON=$(printf '%s\n' "${TAGS[@]+"${TAGS[@]}"}" \
   | python3 -I -c "import sys, json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))")
@@ -237,7 +237,7 @@ fi
 if [ -z "$TITLE_FINAL" ]; then
   TITLE_THRESHOLD=$(curl -s -m 3 "$DAEMON_URL/config" 2>/dev/null \
     | python3 -I -c "import sys, json; print(int(json.load(sys.stdin)['say_threshold_chars']))" 2>/dev/null \
-    || echo "${VOICE_SAY_RENDER_TITLE_THRESHOLD:-${SAY_TITLE_THRESHOLD:-280}}")
+    || echo "${VOICE_SAY_RENDER_TITLE_THRESHOLD:-280}")
   if [ "${#TEXT}" -gt "$TITLE_THRESHOLD" ]; then
     echo "ERR: ${#TEXT} characters is a library entry (over the say threshold of $TITLE_THRESHOLD) — it needs a title." >&2
     echo "     Pass --title=\"<3–8 words>\" or --title-from=<file.md> (its first '# ' heading)." >&2
@@ -296,7 +296,7 @@ print(json.dumps(p))" <<< "$TEXT")
 # curl timeout. VOICE_SAY_RENDER_TIMEOUT wins. Otherwise 1 s per 10 chars, at
 # least 600 s: a slow model renders ~30 chars/s, and a fixed 600 s cut off a
 # 40k-char episode mid-render.
-TIMEOUT="${VOICE_SAY_RENDER_TIMEOUT:-${SAY_TIMEOUT:-}}"
+TIMEOUT="${VOICE_SAY_RENDER_TIMEOUT:-}"
 if [ -z "$TIMEOUT" ]; then
   TIMEOUT=$(( ${#TEXT} / 10 )); [ "$TIMEOUT" -lt 600 ] && TIMEOUT=600
 fi
@@ -348,13 +348,22 @@ RENDER_TS=$(python3 -I -c "import json; print(json.load(open('$RESPONSE_FILE'))[
 # backend, voice, kind, duration_s of the stored row, tab-separated
 IFS=$'\t' read -r GOT_BACKEND GOT_VOICE GOT_KIND GOT_DURATION < <(python3 -I -c "import json; d=json.load(open('$RESPONSE_FILE')); print('\t'.join(str(d.get(k) or '') for k in ('backend', 'voice', 'kind', 'duration_s')))")
 GOT_TITLE=$(python3 -I -c "import json; print((json.load(open('$RESPONSE_FILE')).get('overlay') or {}).get('title') or '')")
-HAS_OVERLAY=$(python3 -I -c "import json; print(1 if 'overlay' in json.load(open('$RESPONSE_FILE')) else '')")
 rm -f "$RESPONSE_FILE"
 
-# The default --out takes the archive's real extension (a WAV backend gives .wav).
-if [ -n "${OUT_DEFAULT:-}" ] && [ -z "${FORMAT_EXPLICIT:-}" ] && [ "${ARCHIVE_PATH##*.}" != "$ARCHIVE_PATH" ]; then
-  OUT="${OUT%.*}.${ARCHIVE_PATH##*.}"
-fi
+# The copy takes the archive's real extension: the backend decides the format
+# (a WAV backend gives .wav), and a file named for another format misleads
+# whatever opens it next.
+ARCHIVE_BASE="${ARCHIVE_PATH##*/}"
+case "$ARCHIVE_BASE" in
+  *.*)
+    EXT="${ARCHIVE_BASE##*.}"
+    OUT_BASE="${OUT##*/}"
+    case "$OUT_BASE" in *.*) OUT_STEM="${OUT%.*}" ;; *) OUT_STEM="$OUT" ;; esac
+    if [ "$OUT" != "$OUT_STEM.$EXT" ]; then
+      [ -z "${OUT_DEFAULT:-}" ] && echo "WARN: the audio is .$EXT; saving it as $OUT_STEM.$EXT, not $OUT" >&2
+      OUT="$OUT_STEM.$EXT"
+    fi ;;
+esac
 # Copy the daemon's archive file to OUT so mpv plays the user-requested path.
 # A daemon on another machine: its path is not here, so fetch it over HTTP.
 if [ -f "$ARCHIVE_PATH" ]; then
@@ -364,25 +373,6 @@ elif ! curl -sSf -m 120 "$DAEMON_URL/audio/$RENDER_TS" -o "$OUT"; then
   exit 3
 fi
 note "rendered: $OUT ($(du -h "$OUT" | cut -f1), backend=${GOT_BACKEND:-${BACKEND:-?}} voice=${GOT_VOICE:-${VOICE_FIELD:-?}}) via voice-say"
-# A daemon older than render-time overlays ignores title/series/episode:
-# set them with POST /overlays instead. Best-effort: the render succeeded.
-if [ -n "$TITLE_FINAL$SERIES$EPISODE" ] && [ -z "$HAS_OVERLAY" ]; then
-  GOT_TITLE=$(RENDER_TS="$RENDER_TS" DAEMON_URL="$DAEMON_URL" TITLE_FINAL="$TITLE_FINAL" \
-    SERIES="$SERIES" EPISODE="$EPISODE" python3 -I -c "
-import os, json, sys, urllib.request
-e = os.environ
-body = {k: v for k, v in (('title', e['TITLE_FINAL']), ('series', e['SERIES'])) if v}
-if e['EPISODE']:
-    body['episode'] = int(e['EPISODE'])
-req = urllib.request.Request(f\"{os.environ['DAEMON_URL']}/overlays/{os.environ['RENDER_TS']}\",
-                             data=json.dumps(body).encode(),
-                             headers={'Content-Type': 'application/json'}, method='POST')
-try:
-    print(json.loads(urllib.request.urlopen(req, timeout=15).read()).get('title') or '')
-except Exception as e:
-    print(f'WARN: overlay set failed ({e})', file=sys.stderr)
-")
-fi
 if [ -n "$TITLE_FINAL" ]; then
   if [ "$GOT_TITLE" = "$TITLE_FINAL" ]; then
     note "titled: $TITLE_FINAL"

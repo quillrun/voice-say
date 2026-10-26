@@ -2,20 +2,18 @@
 
 Centralizing config in one module means engine.py and friends import
 constants from here instead of computing them at import time. That keeps
-the test suite hermetic (set env vars, reload config) and lets operators
+the test suite hermetic (set env vars, reload config) and lets you
 override anything without editing source.
 
 Resolution order, highest precedence first:
 
   1. Environment variables (the ``VOICE_SAY_*`` names below).
   2. ``config.local.toml``  — gitignored; pointed at by ``VOICE_SAY_CONFIG``
-     or found next to ``config.example.toml``. Personal settings live here.
+     or found next to ``config.example.toml``. Your local settings live here.
   3. ``config.example.toml`` — the committed generic baseline.
   4. In-code defaults (this file) — last resort if no TOML ships.
 
-Env vars (all optional; they win over the TOML files). Each old name
-(``SAY_MCP_<X>``; ``SAY_MOCK_<X>`` for the mock knobs) is still read when the
-new one is unset (renamed 2026-10-26, ADR-0010):
+Env vars (all optional; they win over the TOML files):
 
   VOICE_SAY_PORT            HTTP daemon port. Default 8890.
   VOICE_SAY_DAEMON_URL      URL the voice-say CLI uses to reach the daemon.
@@ -51,12 +49,8 @@ from typing import Any
 
 
 def env(name: str) -> str | None:
-    """``VOICE_SAY_<X>``, else its old name: ``SAY_MOCK_<X>`` for the mock
-    knobs, ``SAY_MCP_<X>`` for the rest."""
-    if (value := os.environ.get(name)) is not None:
-        return value
-    rest = name.removeprefix("VOICE_SAY_")
-    return os.environ.get(("SAY_" if rest.startswith("MOCK_") else "SAY_MCP_") + rest)
+    """One ``VOICE_SAY_<X>`` environment variable, or None when unset."""
+    return os.environ.get(name)
 
 try:  # stdlib on 3.11+, tomli shim on 3.10
     import tomllib as _toml
@@ -108,7 +102,7 @@ _FILE: dict[str, Any] = _load_files()
 
 
 def _val(key: str, env_var: str | None, default: Any) -> Any:
-    """env_var (if set, or its old name) > TOML key (if present) > default."""
+    """env_var (if set) > TOML key (if present) > default."""
     if env_var and (value := env(env_var)) is not None:
         return value
     if key in _FILE:
@@ -243,7 +237,7 @@ DEFAULT_BACKENDS: dict[str, dict[str, Any]] = {
 
 
 # --- Model-bypass mock (dev/test) -------------------------------------------
-# NOT a backend. When a single render carries mock=true (a Compose dev toggle),
+# NOT a backend. When a POST /render_longform carries mock=true,
 # the engine SKIPS the model call and replays PRE-EXISTING chunk WAVs from
 # MOCK_CHUNK_DIR on a timer — the normal render path, gapless concat, voice.db
 # row, and episode_start/chunk_ready/episode_complete SSE all stay real; only

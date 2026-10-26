@@ -13,7 +13,7 @@ flowchart TD
 ```
 
 - **Environment variables** override everything. Useful for per-launch overrides
-  and container deployments.
+  and for a LaunchAgent's settings.
 - **`config.local.toml`** is your machine-local file (untracked). Put your edits
   here. If it can't be parsed, the daemon refuses to start and names the line,
   and a Settings save answers 409 instead of overwriting it.
@@ -31,8 +31,12 @@ flowchart TD
 | `allowed_tags` | `[]` | Tag vocabulary. **Empty = open vocabulary (any tag allowed).** Populate to close the vocabulary. |
 | `daemon_port` | `8890` | Loopback port the daemon binds. |
 | `max_render_chars` | `200000` | Hard upper bound on a single render's input length. Read at startup (restart the daemon after changing it; `/reload` doesn't re-read it). |
-| `longform_max_chunks` | `40` | Max chunks per single longform render. A self-DoS guard for the HTTP surface. The chars-per-chunk ceiling is **per-backend** (`longform_chunk_max` in the backends catalog; a backend that carries continuity across its own seams sets it high, e.g. `12500`), anything without a value falls back to the global default `1200`. So total input capacity varies by backend. |
+| `longform_max_chunks` | `40` | Max chunks per single longform render. A self-DoS guard for the HTTP surface. The chars-per-chunk ceiling is **per-backend** (`longform_chunk_max` in the backends catalog; a backend that splits and joins long input itself may set it higher), anything without a value falls back to the global default `1200`. So total input capacity varies by backend. |
 | `cors_origins` | *unset* | Allowed CORS origins. **Unset = loopback only** (no cross-origin access). |
+| `align` | `true` | Read-along word timings, measured from each render's audio by macOS's on-device speech recognizer (the helper `make setup` builds on macOS 26). Off when `false` or when the helper is not built. Runs only while no render is in progress. |
+| `align_locale` | `en-US` | Language the recognizer listens for when aligning. |
+| `align_min_s` | `15` | Renders shorter than this many seconds are not aligned; the reader keeps an even pace for them. |
+| `[pronounce]` | *empty table* | Words the voice mispronounces: written form → how to say it (`Siobhan = "Shiv-awn"`). Applied to the text sent to the backend only (whole words, case-sensitive); the stored transcript keeps the written form. |
 
 ### Changing default_backend / default_voice at runtime
 
@@ -121,14 +125,23 @@ max_render_chars = 200000
 
 # CORS origins. Leave commented out for loopback-only (recommended).
 # cors_origins = "http://127.0.0.1:5173"
+
+# Read-along alignment (macOS 26; helper built by `make setup`).
+align = true
+align_locale = "en-US"
+align_min_s = 15
+
+# Pronunciation fixes: written form = how the voice should say it.
+[pronounce]
+# Siobhan = "Shiv-awn"
 ```
 
 ## Equivalent environment variables
 
 A subset of keys can be overridden via environment variables (the **`VOICE_SAY_`**
-prefix; the old `SAY_MCP_` names are still read when the new one is unset). Env wins over both TOML files — ideal for containers and per-launch
+prefix). Env wins over both TOML files — useful for per-launch
 overrides. The remaining keys are **TOML-only** (`max_render_chars`,
-`allowed_tags`) — set those in `config.local.toml`.
+`allowed_tags`, `align_locale`, `align_min_s`, `[pronounce]`) — set those in `config.local.toml`.
 
 | Config key | Environment variable | Example value |
 |---|---|---|
@@ -139,6 +152,7 @@ overrides. The remaining keys are **TOML-only** (`max_render_chars`,
 | `longform_max_chunks` | `VOICE_SAY_LONGFORM_MAX_CHUNKS` | `40` |
 | `daemon_port` | `VOICE_SAY_PORT` | `8890` |
 | `cors_origins` | `VOICE_SAY_CORS` | `http://127.0.0.1:5173` (one origin; never `*`) |
+| `align` | `VOICE_SAY_ALIGN` | `0` (off) |
 
 Additional env-only settings (no TOML key):
 
@@ -146,12 +160,40 @@ Additional env-only settings (no TOML key):
 |---|---|
 | `VOICE_SAY_CONFIG` | Path to a `config.local.toml` overlay (else found beside `config.example.toml`). |
 | `VOICE_SAY_BACKENDS_CONFIG` | Path to a JSON file that **replaces** the backend catalog — ports, voices, `output_format`. See [backends.md](./backends.md). |
-| `VOICE_SAY_DAEMON_URL` | URL the `voice-say` CLIs use to reach the daemon (default `http://127.0.0.1:8890`). The CLIs read only this, not `config.local.toml`: after changing `daemon_port`, set it too. |
+| `VOICE_SAY_DAEMON_URL` | URL the `voice-say` command line uses to reach the daemon (default `http://127.0.0.1:8890`). It reads only this, not `config.local.toml`: after changing `daemon_port`, set it too. |
+
+### A daemon on another port
+
+After changing `daemon_port`, point the clients at it too. The `voice-say` command line reads
+`VOICE_SAY_DAEMON_URL` (above). The macOS app reads its daemon address once at launch:
+
+```sh
+defaults write local.voicesay.VoiceSay voicesay.daemonURL http://127.0.0.1:<port>
+```
+
+then reopen the app. The app must run on the same machine as the daemon, because it
+plays audio from the file paths the daemon reports.
 
 ```sh
 # Per-launch override example: different voice + a custom data root.
 VOICE_SAY_DEFAULT_VOICE=default VOICE_SAY_DATA_ROOT=~/.local/share/voice-say make run
 ```
+
+## Your own settings stay out of the repo
+
+Everything committed is generic: the `kokoro` default, a relative `./data`, the
+`daemon/launchd/*.plist.example` templates. What is specific to your machine
+lives in files git ignores, so a pull or a pull request never carries it:
+
+| What | Where | Pointed at by |
+|---|---|---|
+| Real paths, your default backend and voice, `[pronounce]` | `daemon/config.local.toml` (`make setup` seeds it), or any file | `VOICE_SAY_CONFIG` (else the one beside `config.example.toml`) |
+| Your backends (hosts, ports, voices) | a JSON catalog, e.g. `daemon/backends.local.json` or a file outside the repo | `VOICE_SAY_BACKENDS_CONFIG` |
+| LaunchAgents with your paths filled in | `~/Library/LaunchAgents/` (rendered from the templates, see [install.md](./install.md)) | launchd |
+
+`*.local.*`, `data/` and `.env` are in `.gitignore`. With none of this present,
+the daemon runs on the committed defaults alone. A backend's model keeps its own
+licence; check it before you use its audio elsewhere.
 
 You can confirm the effective, merged configuration at runtime:
 

@@ -10,12 +10,12 @@ Layout:
   reverse iteration; matches engine.read_history's "newest-first" output).
 - `progress`: ts -> latest progress row, last-write-wins.
 - `event_seq` + `ring`: monotonically-increasing event id + bounded buffer
-  of recent events. Stage 3 uses these for SSE delivery + resume.
+  of recent events, for SSE delivery + resume.
 - `subscribers`: live SSE subscriber queues; broadcast on every record_*.
 
 The hooks `engine.on_history_appended` and `progress.on_progress_written`
 get wired to `record_history` / `record_progress` at daemon startup so
-every write path lands in the cache after the on-disk append succeeds.
+every write path lands in the cache after the voice.db write succeeds.
 """
 from __future__ import annotations
 

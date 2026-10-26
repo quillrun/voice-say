@@ -1,9 +1,9 @@
 """Request-shape helpers shared across route modules.
 
-Centralizes the four patterns that every handler used to hand-roll:
-  - `_json_error(stage, message, status)` — error envelope builder
-  - `_parse_json(request)` — JSON body parse with a typed error response
-  - `_stage_to_status(stage)` — RenderError stage → HTTP status mapping
+Centralizes the four patterns every handler needs:
+  - `json_error(stage, message, status)` — error envelope builder
+  - `parse_json(request)` — JSON body parse with a typed error response
+  - `stage_to_status(stage)` — RenderError stage → HTTP status mapping
   - typed-list / typed-number coercion guards
 
 Keep this file tiny — it's helpers, not policy.

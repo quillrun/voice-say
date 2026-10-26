@@ -10,4 +10,4 @@ Every render flow goes through engine.render() so the on-disk contract
 (audio archive file + a row in the SQLite store, incl. full transcript)
 lives in exactly one place.
 """
-__version__ = "2.0.0"
+__version__ = "2.0.1"

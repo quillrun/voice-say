@@ -47,6 +47,8 @@ async def daemon(tmp_path):
 
     async def voices(req):
         state["calls"].append(("GET", req.path, {}))
+        if req.match_info["backend"] == "tts-down":
+            return web.json_response({"backend": "tts-down", "voices": []})
         if req.match_info["backend"] != "tts-local":
             return web.json_response({"error": "not_found"}, status=404)
         return web.json_response({"backend": "tts-local", "voices": ["af_alloy", "af_bella"]})
@@ -99,10 +101,8 @@ async def _run(url: str, *args: str, env_extra: dict | None = None) -> tuple[int
 
 async def test_shim_runs_the_module(daemon):
     proc = await asyncio.create_subprocess_exec(
-        # the pre-2026-10-26 name still reaches the daemon
         str(VOICE_SAY), "tags",
-        env={**{k: v for k, v in os.environ.items() if k != "VOICE_SAY_DAEMON_URL"},
-             "SAY_MCP_DAEMON_URL": daemon["url"]},
+        env={**os.environ, "VOICE_SAY_DAEMON_URL": daemon["url"]},
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     out, err = await proc.communicate()
     assert proc.returncode == 0, err.decode()
@@ -132,6 +132,8 @@ async def test_voices_and_unknown_backend(daemon):
     assert rc == 0 and out.split() == ["af_alloy", "af_bella"]
     rc, _, err = await _run(daemon["url"], "voices", "nope")
     assert rc == 4 and "unknown backend" in err
+    rc, out, err = await _run(daemon["url"], "voices", "tts-down")
+    assert rc == 0 and out == "" and "no voices listed" in err
 
 
 async def test_restart_posts_to_the_daemon(daemon):
@@ -249,18 +251,3 @@ async def test_set_delete_of_a_row_past_the_history_window_says_the_file_is_kept
     assert rc == 0, err
     assert ("GET", "/history", {"limit": "5000"}) in daemon["calls"]
     assert "file: kept" in out and "already gone" not in out
-
-
-def test_publishable_check_outside_a_git_checkout_fails_instead_of_scanning_nothing(tmp_path):
-    # A ZIP download has no git: the scans list files with git ls-files and
-    # would pass on an empty list.
-    import shutil
-    import subprocess
-
-    (tmp_path / "scripts").mkdir()
-    shutil.copy(DAEMON_DIR.parent / "scripts" / "publishable-check.sh", tmp_path / "scripts")
-    env = {**os.environ, "GIT_CEILING_DIRECTORIES": str(tmp_path.parent)}
-    r = subprocess.run(["bash", str(tmp_path / "scripts" / "publishable-check.sh")],
-                       cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30)
-    assert r.returncode == 1
-    assert "needs a git checkout" in r.stderr

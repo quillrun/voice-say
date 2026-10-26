@@ -2,7 +2,7 @@
 
 Local-only text-to-speech — turn text into spoken audio, entirely on your own machine.
 
-voice-say is a small text-to-speech system that runs completely on your computer. There are no cloud calls, no API keys, and nothing leaves your machine. You type or send some text, voice-say renders it to an audio file using a local speech backend, and plays it back. A single background service (the **daemon**) does all the work, and several friendly front ends talk to it: a **macOS app**, and two **command-line tools** (`voice-say render` to make audio, the other `voice-say` commands to work the library). Every render is saved to a tidy on-disk archive so you can find and replay it later.
+voice-say is a small text-to-speech system that runs completely on your computer. There are no cloud calls, no API keys, and nothing leaves your machine. You type or send some text, voice-say renders it to an audio file using a local speech backend, and plays it back. A single background service (the **daemon**) does all the work, and two front ends talk to it: a **macOS app** and the **`voice-say` command line** (`voice-say render` makes audio, the other commands work the library). Every render is saved to a tidy on-disk archive so you can find and replay it later.
 
 ## How it fits together
 
@@ -10,7 +10,7 @@ voice-say is a small text-to-speech system that runs completely on your computer
 flowchart LR
     subgraph Clients
         APP["macOS app"]
-        CLI["command-line tools (voice-say render, voice-say)"]
+        CLI["voice-say command line"]
     end
 
     DAEMON["voice-say daemon<br/>127.0.0.1:8890"]
@@ -90,7 +90,7 @@ and **plays immediately**. The audio file is saved to your archive automatically
 - [Mock mode](internals/mock-mode.md) — exercise the full render lifecycle with no model
 - [Tags](internals/tags.md) — the open tag vocabulary
 - [Security](internals/security.md) — the local-only guarantees
-- [Tracked core vs private overlay](internals/public-vs-private.md) — what lives in the core vs the overlay
+- [Diagrams](diagrams.md) — the architecture, render, streaming and data flows in one gallery
 
 ### Overview
 - [Overview](product/overview.md) — what voice-say is and what it's for
@@ -99,5 +99,4 @@ and **plays immediately**. The audio file is saved to your archive automatically
 ### Project
 - [Working notes](../CONTRIBUTING.md) — conventions for changing this tree
 - [Security notes](../SECURITY.md) — trust model in [internals/security.md](internals/security.md)
-- [Roadmap](roadmap.md) — what is planned next
-- Decisions (ADRs): [0001 centralize config & private overlay](adr/0001-centralize-and-publishable.md) · [0002 open tag vocabulary](adr/0002-open-tag-vocabulary.md) · [0004 rename to voice-say](adr/0004-rename-to-voice-say.md) · [0006 wav passthrough](adr/0006-wav-passthrough.md) · [0007 cut vault & sqlite store](adr/0007-cut-vault-and-sqlite-store.md) · [0010 `say` becomes `voice-say render`](adr/0010-say-becomes-voice-say-render.md). Numbers are not contiguous.
+- [Issues](https://github.com/quillrun/voice-say/issues) — bugs and ideas

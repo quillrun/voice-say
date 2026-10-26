@@ -24,8 +24,6 @@ let package = Package(
         ),
         // Swift Testing target (Xcode 26.5 ships the Testing library). Reaches
         // the executable's internal symbols via `@testable import VoiceSay`.
-        // Replaces the standalone swiftc runner (Tests/run.sh, retired) — `swift
-        // test` is now the single source of truth for the macOS client tests.
         .testTarget(
             name: "VoiceSayTests",
             dependencies: ["VoiceSay"],

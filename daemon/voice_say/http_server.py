@@ -22,13 +22,16 @@ Endpoints:
   GET/POST /overlays/{ts}                                   (_routes_history)
   GET  /audio/{ts}           → file response                (_routes_history)
   POST /reload               re-hydrate cache from voice.db (_routes_history)
+  POST /align/{ts}           measure word timings now       (_routes_history)
   GET  /backends             → list[backend]                (_routes_meta)
   GET  /voices/{backend_id}  → {backend, voices}            (_routes_meta)
   GET  /tags                 → {tags: [...in use...]}       (_routes_meta)
+  GET  /stats                → library and lifetime totals  (_routes_meta)
   POST /playback/active      → {ok: true}                   (_routes_meta)
   GET  /health[?deep=1]      → {status: ok, ...}            (_routes_meta)
   GET  /config               → {version, backends, ...}     (_routes_meta)
   POST /config               write default_backend/_voice/say_threshold_chars (_routes_meta)
+  POST /backends/{backend}/restart  restart a backend's launchd service (_routes_meta)
   GET  /events               → SSE stream                   (this file)
 
 Run:
@@ -39,7 +42,7 @@ There is no authentication. --host other than 127.0.0.1 still answers only
 loopback and Tailscale host names (_hostguard), so a LAN address is refused,
 but every device on the tailnet gets read and write access to the library.
 
-Logs to stderr (or LAUNCHD_STDOUT_PATH if set by LaunchAgent).
+Logs to stderr (the LaunchAgent redirects it to a file).
 """
 from __future__ import annotations
 
@@ -259,7 +262,7 @@ async def _logging_middleware(request: web.Request, handler: Any) -> web.Respons
         # An unhandled exception in a handler would otherwise vanish from
         # the structured log (aiohttp renders a bare 500 and middleware
         # never logs success). Emit the error class + message so the
-        # operator can postmortem from the daemon's error log.
+        # cause can be found later from the daemon's error log.
         _emit_log(req_id=req_id, method=request.method, path=request.path,
                   status=500, ms=(time.monotonic() - t0) * 1000,
                   error=type(exc).__name__, message=str(exc)[:200])

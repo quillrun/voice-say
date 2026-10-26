@@ -2,7 +2,7 @@
 
 The complete HTTP reference for the voice-say daemon — the single process that owns the render pipeline and all on-disk state.
 
-The daemon is an `aiohttp` server. By default it binds **loopback only** at `http://127.0.0.1:8890`. Every client (the command-line tools, the macOS app) funnels through these endpoints; the daemon is the single writer of the on-disk archive and the SQLite store, so the saved state stays consistent regardless of which client asked for a render.
+The daemon is an `aiohttp` server. By default it binds **loopback only** at `http://127.0.0.1:8890`. Every client (the `voice-say` command line, the macOS app) funnels through these endpoints; the daemon is the single writer of the on-disk archive and the SQLite store, so the saved state stays consistent regardless of which client asked for a render.
 
 ```mermaid
 flowchart LR
@@ -43,6 +43,7 @@ flowchart LR
 | POST | `/config` | Persist runtime-mutable defaults (`default_backend` / `default_voice`) |
 | GET | `/events` | Server-Sent Events live stream |
 | GET | `/tags` | Tags currently in use across history |
+| GET | `/stats` | Lifetime render totals next to what the library holds now |
 | GET | `/progress/{ts}` | Read playback progress for one render |
 | POST | `/progress/{ts}` | Update playback progress |
 | GET | `/overlays/{ts}` | Read overlays (star / tags / bookmarks / soft-delete) |
@@ -80,7 +81,7 @@ Render text to speech. This is a **destructive** call: a successful render write
 | `backend` | string | no | the configured `default_backend` | Must be a known backend id (see `GET /backends`). Alias: `backend_id`. |
 | `voice` | string | no | backend's `default_voice` | Backend-specific voice id. |
 | `speed` | number | no | `1.0` | Honoured only by backends with `supports_speed: true`; ignored otherwise. |
-| `tags` | string[] | no | `[]` | Normalized (trim, lowercase, spaces→hyphens). In open-vocabulary mode (default) any tag is accepted. In closed mode (`allowed_tags` non-empty) unknown tags are rejected with HTTP 400. |
+| `tags` | string[] | no | `[]` | Normalized (lowercase; spaces and underscores → hyphens; only `a-z0-9-` kept; hyphen runs collapsed and trimmed). In open-vocabulary mode (default) any tag is accepted. In closed mode (`allowed_tags` non-empty) unknown tags are rejected with HTTP 400. |
 | `title`, `series`, `episode` | string, string, int | no | — | Set on the new row's overlay (same rules as `POST /overlays/{ts}`); the response then carries `overlay`. Also accepted by `/render_longform`, and applied to a draft saved from a failed render. A bad `episode` is a 400 before rendering. |
 
 Every render is classified at render time into a **`kind`**: `"say"` when `chars <= say_threshold_chars` (default 280), otherwise `"render"` (see [Configuration](../setup/configuration.md)). The classification is automatic — there is no flag to override it.
@@ -96,19 +97,20 @@ The returned **entry dict** is the same JSON shape stored in the `renders` table
   "backend": "kokoro",
   "voice": "default",
   "speed": 1.0,
-  "format": "mp3",
+  "format": "wav",
   "chars": 21,
   "words": 4,
-  "duration_s": 1.8,
-  "bytes": 28940,
-  "archive_name": "2026-05-29-hello-from-voice-say.mp3",
-  "archive_path": "./data/voice-archive/2026/05/2026-05-29-hello-from-voice-say.mp3",
+  "duration_s": 1.5,
+  "bytes": 72044,
+  "archive_name": "voice-hello-from-voice-say-20260529-101530-a3f9.wav",
+  "archive_path": "./data/voice-archive/2026/05/voice-hello-from-voice-say-20260529-101530-a3f9.wav",
   "text": "Hello from voice-say.",
   "tags": ["briefing"]
 }
 ```
 
 - `kind` is `"say"` for short renders (`chars <= say_threshold_chars`) and `"render"` otherwise.
+- `archive_name` is `voice-<first words>-<YYYYMMDD-HHMMSS UTC>-<4 hex>.<format>`; `format` is the backend's `output_format` (`wav` for `kokoro`).
 - `archive_path` is a path on the daemon host (shown here generically as `./data/...`).
 - `text` is the full transcript as rendered, stored in the `renders` row (and indexed by FTS5 for `/search`): verbatim, except that emotion tags are removed for a backend without `supports_emotion_tags`.
 - `duration_s` is probed from the rendered audio at render time (`0.0` if it could not be probed).
@@ -162,11 +164,12 @@ In `mode: "stream"`, the episode can be steered while it is in flight:
 - **`POST /episode/{id}/cancel`** — abort the in-flight episode. No row is written; the
   daemon emits a terminal `episode_cancelled` SSE event and the open `/render_longform`
   POST resolves `200` with `{ "cancelled": true, "episode_id": "<id>" }`. `404`
-  (`error: "not_found"`) if the id is not a currently rendering episode.
+  (`error: "not_found"`) if the id is not a currently rendering episode; `409`
+  (`error: "conflict"`) once its chunks are done and the row is being saved.
 - **`POST /episode/{id}/finalize`** — stop-and-save: finish the in-flight chunk, stop
   starting new ones, then concatenate what exists into the one canonical mp3 + row and
   emit the normal `episode_complete`. On save-and-stop the resulting row is tagged
-  `"draft"` (so it lands in the built-in **Drafts** category) and a **resume boundary**
+  `"draft"` (the macOS app lists it under **Rendering** as a paused draft) and a **resume boundary**
   is persisted on the row — `resume_full_text` (the whole episode text) plus
   `resume_char_offset` (how far rendering got) — so the partial can be continued later
   via `POST /episode/resume`. `404` (`error: "not_found"`) if the id is not currently
@@ -175,7 +178,7 @@ In `mode: "stream"`, the episode can be steered while it is in flight:
   keeps the already-completed chunks as the one `"draft"` row (with the same resume
   boundary) and emits the normal `episode_complete` (`save_and_stop=true`), but unlike
   `finalize` it does **not** wait for the in-flight chunk: that chunk's synth is
-  cancelled and dropped, so a long final chunk can't strand the operator on the
+  cancelled and dropped, so a long final chunk can't keep you waiting on the
   "wrapping up" spinner. The dropped chunk's text is simply left for a later resume.
   If no chunk has completed yet there is nothing to keep, so it falls back to a cancel
   (no row, terminal `episode_cancelled`). `404` (`error: "not_found"`) if the id is not
@@ -199,7 +202,7 @@ draft's stored `resume_full_text`, **skips** every chunk whose cumulative end is
 before `resume_char_offset` (the boundary is a clean chunk seam), renders **only** the
 remainder, then concatenates `[draft mp3 + new chunks]` into **one** new canonical
 `renders` row — and supersedes the draft (its overlay is soft-deleted, `deleted=true`,
-so **Drafts** shows only the live continuation). The new row's audio is a strict superset
+so the app shows only the live continuation). The new row's audio is a strict superset
 of the draft's.
 
 Resume drives the **same** streaming SSE contract as a fresh stream render
@@ -352,7 +355,7 @@ curl -sS http://127.0.0.1:8890/config
 
 ## POST /config
 
-Persist the **runtime-mutable defaults** and live-reload them — no daemon restart. The written values become authoritative for every surface that reads `default_backend` / `default_voice` at render time (the command-line tools, the macOS app).
+Persist the **runtime-mutable defaults** and live-reload them — no daemon restart. The written values become authoritative for every surface that reads `default_backend` / `default_voice` at render time (the `voice-say` command line, the macOS app).
 
 Three keys are writable. A request must carry at least one of them.
 
@@ -361,7 +364,7 @@ Three keys are writable. A request must carry at least one of them.
 | Field | Type | Notes |
 |---|---|---|
 | `default_backend` | string | Must be a **known backend id** (see `GET /backends`); an unknown id is rejected with `400`. |
-| `default_voice` | string \| null | The default voice id. **Not allowlisted** — it is passed through to the backend as-is, so a cloned/non-catalog voice is accepted (the advertised `voices` list drives UI pickers, not validation). `null`, `""`, or `"default"` clears it (the backend then picks its own). A non-string (and non-null) value is rejected with `400`. |
+| `default_voice` | string \| null | The default voice id. **Not allowlisted** — it is passed through to the backend as-is, so a voice outside the catalog's list is accepted (the advertised `voices` list drives UI pickers, not validation). `null`, `""`, or `"default"` clears it (the backend then picks its own). A non-string (and non-null) value is rejected with `400`. |
 | `say_threshold_chars` | int | Cut-off (>= 0) at or below which a render is classified `say`. Live-reloaded; takes effect without restart. A non-integer or negative value is rejected with `400`. |
 
 ```json
@@ -391,6 +394,7 @@ Returns the same body as `GET /config` (reflecting the freshly reloaded values),
 |---|---|---|
 | 200 | At least one writable key was applied and persisted | — |
 | 400 | Unknown `default_backend`, a non-string `default_voice`, an invalid `say_threshold_chars` (non-integer or negative), malformed JSON, or **no writable key present** | `request` |
+| 409 | The existing `config.local.toml` cannot be parsed, so it is left as it is | `config` |
 | 500 | The config file could not be written | `config` |
 
 ### curl
@@ -470,7 +474,7 @@ Tags currently in use across render history. Tags use an **open vocabulary** by 
 { "tags": ["briefing", "draft", "daily-notes"] }
 ```
 
-> Tag normalization: trim → lowercase → spaces become hyphens, so `"Daily Notes"` and `"daily-notes"` collapse to one tag. `star` (an overlay boolean) and playback `completed` (a progress field) are mechanisms, not stored tags — this endpoint returns only the tags persisted server-side.
+> Tag normalization: lowercase; spaces and underscores become hyphens; only `a-z0-9-` is kept; hyphen runs are collapsed and trimmed. So `"Daily Notes"` and `"daily-notes"` collapse to one tag. `star` (an overlay boolean) and playback `completed` (a progress field) are mechanisms, not stored tags — this endpoint returns only the tags persisted server-side.
 >
 > The macOS client, however, surfaces a virtual `"completed"` tag derived from the `progress.completed` field (see [`/progress/{ts}`](#post-progressts)): once a render has been **played to the end** it auto-appears in that client's tag list and is read-only (it cannot be removed via the overlay tag API, and it is re-derived rather than stored). It does **not** appear in this server-side `/tags` aggregate.
 
@@ -490,8 +494,8 @@ How much has been rendered over the daemon's lifetime, next to what the library 
 
 ```json
 {
-  "lifetime": { "renders": 398, "chars": 5014201, "words": 679454, "duration_s": 188280.4, "bytes": 3602113210, "since": "2026-05-24" },
-  "library":  { "renders": 361, "duration_s": 182311.0, "bytes": 3481002113 }
+  "lifetime": { "renders": 120, "chars": 450000, "words": 75000, "duration_s": 30000.0, "bytes": 960000000, "since": "2026-01-01" },
+  "library":  { "renders": 100, "duration_s": 25000.0, "bytes": 800000000 }
 }
 ```
 
@@ -524,7 +528,7 @@ Read the playback progress aggregate for one render. Progress is **mutable clien
 
 `404` with `error: "not_found"` if no progress exists for the `ts`.
 
-`completed` is `true` once the operator has **played** this render through to the end (`played_s >= duration`). It is a *playback*-completion signal, distinct from render completion (whether the audio finished synthesizing). The macOS client gates a virtual, undeletable `"#completed"` tag on this field — see the [`/tags`](#get-tags) note.
+`completed` is `true` once the listener has **played** this render through to the end (`played_s >= duration`). It is a *playback*-completion signal, distinct from render completion (whether the audio finished synthesizing). The macOS client gates a virtual, undeletable `"#completed"` tag on this field — see the [`/tags`](#get-tags) note.
 
 ### curl
 
@@ -745,7 +749,7 @@ These exist for tooling and are rarely called directly by UI clients.
 
 ### POST /reload
 
-Re-hydrate the daemon's in-memory cache from the SQLite store. An external process (e.g. a chunked-render queue or a manual edit) calls this after writing to the store so live clients and SSE subscribers see new rows without restarting the daemon.
+Re-hydrate the daemon's in-memory cache from the SQLite store. A process that writes to the store outside the daemon (an import script, a manual edit) calls this after writing to the store so live clients and SSE subscribers see new rows without restarting the daemon.
 
 ```bash
 curl -sS -X POST http://127.0.0.1:8890/reload
@@ -754,7 +758,7 @@ curl -sS -X POST http://127.0.0.1:8890/reload
 
 ### POST /backends/{backend_id}/restart
 
-Restart the backend's launchd service from the catalog entry's `service` (`{"kind": "launchd", "label": "…"}`) with `launchctl kickstart -k`, then wait up to a few seconds for it to answer. Only a catalog id is accepted, never a free label. A sandboxed client that may reach loopback but not run `launchctl` uses this.
+Restart the backend's launchd service from the catalog entry's `service` (`{"kind": "launchd", "label": "…"}`) with `launchctl kickstart -k`, then wait up to a few seconds for it to answer. Only a catalog id is accepted, never a free label. It is for a client that can reach the daemon but cannot run `launchctl` itself.
 
 | Status | When |
 |---|---|
@@ -772,8 +776,8 @@ curl -sS -X POST http://127.0.0.1:8890/backends/kokoro/restart
 Measure one render's word timings from its audio and store them as its `seam_map`, the points the app's reader highlights through; the row is then re-sent as a `render` event. New renders are aligned automatically once their row lands; this is for rows rendered before that, and is what `voice-say align` calls. Alignment uses macOS's on-device speech recognizer through a small helper that `make setup` builds (`daemon/.build/voice-say-words`, macOS 26+), and `align = true` (the default). Runs one at a time and only while no render is in progress, so it never slows one (the request waits until the renders finish); an 18-minute episode takes about 16 s on an M2 Pro. `GET /health` shows it under `alignment`.
 
 ```bash
-curl -sS -X POST http://127.0.0.1:8890/align/2026-10-20T20:59:37.695590Z
-# → {"ok": true, "ts": "2026-10-20T20:59:37.695590Z", "points": 2295}
+curl -sS -X POST http://127.0.0.1:8890/align/2026-05-29T10:15:30.123456Z
+# → {"ok": true, "ts": "2026-05-29T10:15:30.123456Z", "points": 500}
 ```
 
 `503` when alignment is off, `404` for an unknown `ts`, `422` when the alignment failed (the row keeps its seams; the daemon log says why).

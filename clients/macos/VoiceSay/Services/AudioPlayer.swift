@@ -6,10 +6,10 @@
 //   1. Per-entry RESUME — seeks to entry.progress.playedS on play.
 //   2. PROGRESS PERSISTENCE — POSTs every ~3s and on pause/stop/swap to
 //      the voice-say daemon's /progress/<ts> endpoint, so progress survives
-//      restarts and is visible to the bash skill + MCP tools.
-//   4. SINGLE-PLAYER COORDINATION — on play, kills any active CLI-spawned
+//      restarts and is visible to the CLI and any other daemon client.
+//   3. SINGLE-PLAYER COORDINATION — on play, kills any active CLI-spawned
 //      mpv via voice-ctl and POSTs /playback/active so other surfaces
-//      pause. On a `playback_active` SSE event from a non-sayapp source,
+//      pause. On a `playback_active` SSE event from another source,
 //      stops itself. Together this prevents doubled audio when both
 //      VoiceSay's AVAudioPlayer and the CLI's mpv are alive.
 
@@ -20,7 +20,7 @@ import Observation
 import AppKit
 
 extension Notification.Name {
-    /// Fired by HistoryStore when a non-sayapp source claims playback.
+    /// Fired by HistoryStore when another source claims playback.
     static let playbackTakenByOther = Notification.Name("playbackTakenByOther")
     /// Header button / ⌥⌘S → ContentView shows or hides the sidebar.
     static let toggleSidebar = Notification.Name("toggleSidebar")
