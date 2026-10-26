@@ -1,0 +1,162 @@
+# Developing voice-say
+
+Pull requests are welcome, and so are bug reports and ideas as issues. Security reports go
+through [SECURITY.md](SECURITY.md), not a public issue.
+
+- For anything bigger than a fix, open an issue first so the approach is agreed before you build it.
+- A pull request needs `make publishable-check` to pass (see [the readiness gate](#the-readiness-gate)).
+- CI runs on a first-time contributor's pull request after a maintainer approves the run.
+- Contributions are under the [licence](LICENSE) (MIT).
+
+The rest of this file is dev notes: how to set up a dev environment, run the tests, pass the
+readiness gate, and add a backend.
+
+voice-say is a local-only text-to-speech system: one Python daemon owns the render pipeline, and
+thin clients (the `voice-say` CLI, with `render` to make audio, and a macOS app) funnel through it.
+Changes should preserve two invariants: the **single render path** (every render goes through
+the daemon's engine) and the **tracked-core-vs-private-overlay** code seam (no secrets, machine
+paths, or personal data in tracked code — see
+[the tracked-core / private-overlay boundary](docs/internals/public-vs-private.md)). Your own
+voices, backends and settings live in the untracked overlay.
+
+## Dev setup
+
+Requires Python 3.10–3.12 (CI tests 3.11 and 3.12). `make setup` does the following for you; by
+hand, the daemon package lives in `daemon/`, so install from there:
+
+```bash
+cd daemon
+python3.12 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+```
+
+The `[dev]` extra pulls in `pytest`, `pytest-asyncio` and `pytest-aiohttp`. The core daemon depends only on
+`aiohttp`, `httpx`, `mutagen` (mp3 duration probe) and `tomli-w` (config writer), plus `tomli` on
+Python 3.10. Two console entry points are installed into `daemon/.venv`:
+
+| command | what it runs |
+|---|---|
+| `voice-say-daemon` | the aiohttp daemon (loopback `127.0.0.1:8890`) |
+| `voice-say` | the library CLI (proxies the daemon over HTTP) |
+
+Start the daemon first; all clients require it to be running.
+
+## Running the test suite
+
+```bash
+cd daemon
+.venv/bin/pytest
+```
+
+`pytest` is configured in `daemon/pyproject.toml` with `asyncio_mode = "auto"` and
+`testpaths = ["tests"]`, so a bare invocation discovers everything. The suite covers the engine
+render contract, the HTTP routes (incl. FTS5 `/search`), the `voice-say` CLI (`render` included) against a mock daemon, overlays, playback progress,
+retention, daemon state, and security (CORS + audio path-traversal + slow-subscriber drop). Backends
+are external HTTP services; tests stub the backend call rather than hitting a live model, so the
+suite runs offline with no model weights present. Run a single module while iterating:
+
+```bash
+.venv/bin/pytest tests/test_engine.py -q
+```
+
+The macOS client carries its own Swift Testing suite (`import Testing`), run from the package root
+with the full Xcode toolchain — it exercises the real app types via `@testable import VoiceSay`:
+
+```bash
+cd clients/macos
+swift test
+```
+
+## The readiness gate
+
+Before a commit lands, run the readiness gate:
+
+```bash
+make publishable-check
+```
+
+The gate enforces the tracked-core-vs-private-overlay code seam — it keeps private voices and
+machine-specific config out of the tracked code. It blocks the
+commit if any of the following fail:
+
+- **Secrets** — credentials, tokens, or keys in tracked files.
+- **Banned terms** — personal, proprietary, or organization-specific names, and absolute home
+  paths. The real list is private: the script reads it from
+  `~/.config/voice-say/publishable-terms.sh` on the maintainer's machine. Without that file (a fork,
+  and the CI run) this step checks only the placeholder names and home paths, so a green CI gate
+  does not prove the private list passed.
+- **Non-generic committed defaults** — the committed config must ship generic defaults
+  (e.g. `default_backend = kokoro`, `default_voice = default`). Local specifics belong only in the
+  untracked config overlay, never in tracked code.
+- **Tests** — `pytest` must be green.
+- **License / README** — both `LICENSE` and `README.md` must be present.
+
+> The gate is the enforcement arm of [ADR-0001](docs/adr/0001-centralize-and-publishable.md) and the
+> [tracked-core / private-overlay boundary](docs/internals/public-vs-private.md). Treat a red gate as
+> a blocker.
+
+## Code layout
+
+```
+daemon/voice_say/         daemon package (the one render path)
+  engine.py               render pipeline: backend call → 2 artefacts + events
+  http_server.py          aiohttp app wiring + entry point (main)
+  _routes_*.py            render / history / meta route handlers
+  _sinks.py / _db.py      artefact writers (archive, voice.db) + SQLite helpers
+  cli.py                  the voice-say library CLI (urllib, proxies the daemon)
+cli/                      voice-say (+ voice-say-render) + voice-ctl
+clients/macos/            VoiceSay — native SwiftUI app
+docs/                     architecture, HTTP/CLI reference, setup, ADRs
+```
+
+All routes ultimately call `engine.render()`, so the on-disk render contract lives in exactly one
+place. See [`docs/internals/architecture.md`](docs/internals/architecture.md) for the deep walkthrough.
+
+## How to add a backend
+
+Backends are pluggable HTTP services that speak the OpenAI-compatible speech contract. The daemon
+never imports a backend in-process; it POSTs to one.
+
+1. **Implement the contract.** Accept `POST /v1/audio/speech` with an OpenAI-style JSON body
+   (model/voice/input/response_format) and return raw audio bytes. Run it on a fixed loopback port.
+2. **Register it.** Add an entry with its `url` and `model` to the JSON file that
+   `VOICE_SAY_BACKENDS_CONFIG` points at ([backends.md](docs/setup/backends.md#adding-a-backend)).
+   It then appears in `GET /backends`, its voices in `GET /voices/{backend_id}`, and it becomes
+   selectable via the `backend` argument on `POST /render` (and `--backend=` on the CLI).
+3. **Verify end to end:**
+
+   ```bash
+   voice-say render --no-play --backend=my-backend "hello from the new backend"
+   ```
+
+   Confirm both artefacts (the archive file and the `renders` row in `voice.db`) were written.
+
+Keep committed defaults generic. If your backend is the new default for a class of hardware, change
+the default only in the example config, never hard-coded.
+
+## Style
+
+- **Python:** `from __future__ import annotations`; type hints on public APIs; functions ≤ ~40 lines
+  where reasonable; no `import *`.
+- **Bash:** `set -euo pipefail`; quote variables; `[[` inside `bash`, `[` inside `sh`.
+
+## Commit messages
+
+```
+[tag]: short imperative summary
+
+Optional longer explanation. Wrap at 72 columns.
+```
+
+Tags: `daemon`, `cli`, `docs`, `ci`, `tests`, `chore`.
+
+## Versioning
+
+Semver-style for our own bookkeeping. Bump `daemon/voice_say/__init__.py` `__version__` and
+`CHANGELOG.md` together. Note breaking HTTP changes (response shape, removed endpoints) in the
+CHANGELOG so the macOS app and CLI clients stay in sync.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for reporting a vulnerability, and
+[`docs/internals/security.md`](docs/internals/security.md) for the trust model.

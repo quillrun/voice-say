@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleExecutable</key>
+  <string>VoiceSay</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
+  <key>CFBundleIdentifier</key>
+  <string>local.voicesay.VoiceSay</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>VoiceSay</string>
+  <key>CFBundleDisplayName</key>
+  <string>VoiceSay</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>2.0.0</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>26.0</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
+  </dict>
+  <!-- TCC prompts, shown only when the daemon's archive root sits under
+       ~/Desktop or ~/Documents. The app only reads there: it plays the
+       render files (history comes from the daemon over HTTP). Without the
+       key macOS denies the read and renders can't be played. -->
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>VoiceSay plays your renders from the voice-archive folder.</string>
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>VoiceSay plays your renders from the voice-archive folder.</string>
+</dict>
+</plist>

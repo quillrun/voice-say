@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""voice-say-stream — instant playback for `voice-say render --fast`.
+
+POSTs text to a backend's OpenAI-compatible `POST /v1/audio/speech` with
+`stream: true, response_format: "pcm"` and pipes the PCM16 chunks straight into
+a headless mpv as they arrive, so the first word plays before the whole render
+is done. mlx-audio's server streams this way; so does any backend that sends
+16-bit mono PCM chunks for that request.
+
+Reads text from stdin. The backend's url, model and default voice come from the
+daemon (GET /config): --backend=<id>, else the daemon's default_backend.
+
+Tradeoff vs the daemon path: this streams direct to the player for latency, so
+it does NOT go through the daemon archive / voice.db. Use plain
+`voice-say render --backend=<id>` for an archived render. --out saves the
+assembled wav locally.
+
+Args: --backend=<id>, --voice=<id>, --no-play, --bg, --out=<path.wav>
+Env:  VOICE_SAY_DAEMON_URL (old name SAY_MCP_DAEMON_URL)
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+import wave
+
+SR = 24000  # when the response doesn't name a rate (mlx-audio sends bare audio/pcm)
+
+
+def _user_tmp() -> str:
+    """The per-user temp dir voice-say render and voice-ctl use (0700 on macOS;
+    the app finds it with NSTemporaryDirectory()), never the shared /tmp there."""
+    if os.environ.get("TMPDIR"):
+        return os.environ["TMPDIR"]
+    try:
+        darwin = subprocess.run(["getconf", "DARWIN_USER_TEMP_DIR"], capture_output=True,
+                                text=True, check=False).stdout.strip()
+    except OSError:
+        darwin = ""
+    return darwin or "/tmp"
+
+
+RUN_DIR = _user_tmp()
+MPV_SOCK = os.path.join(RUN_DIR, "voice-mpv.sock")
+DAEMON = (os.environ.get("VOICE_SAY_DAEMON_URL") or os.environ.get("SAY_MCP_DAEMON_URL")
+          or "http://127.0.0.1:8890")
+
+
+def resolve_backend(backend_id: str) -> dict:
+    """The catalog entry for backend_id (or the default) from the running daemon."""
+    try:
+        with urllib.request.urlopen(f"{DAEMON}/config", timeout=5) as r:
+            cfg = json.loads(r.read())
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        print(f"ERR: voice-say daemon unreachable at {DAEMON} ({exc})", file=sys.stderr)
+        raise SystemExit(6)
+    want = backend_id or cfg.get("default_backend")
+    for b in cfg.get("backends", []):
+        if b.get("id") == want:
+            return b
+    known = ", ".join(b.get("id", "?") for b in cfg.get("backends", []))
+    print(f"ERR: unknown backend '{want}' (known: {known})", file=sys.stderr)
+    raise SystemExit(4)
+
+
+def main() -> int:
+    play, out_path, bg, backend_id, voice = True, None, False, "", ""
+    for a in sys.argv[1:]:
+        if a == "--no-play":
+            play = False
+        elif a == "--bg":
+            bg = True
+        elif a.startswith("--out="):
+            out_path = a[len("--out="):]
+        elif a.startswith("--backend="):
+            backend_id = a[len("--backend="):]
+        elif a.startswith("--voice="):
+            voice = a[len("--voice="):]
+
+    text = sys.stdin.read().strip()  # read BEFORE any fork (parent owns the pipe)
+    if not text:
+        print("ERR: no text on stdin", file=sys.stderr)
+        return 2
+
+    b = resolve_backend(backend_id)  # before the fork, so a bad id fails in the caller
+
+    body = {"model": b.get("model"), "input": text, "voice": voice or b.get("default_voice"),
+            "stream": True, "response_format": "pcm"}
+    url = f"{b['url']}/v1/audio/speech"
+    req = urllib.request.Request(url, data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"})
+
+    if out_path and not out_path.endswith(".wav"):
+        out_path = os.path.splitext(out_path)[0] + ".wav"  # we write wav, label it honestly
+    buf = bytearray() if out_path else None
+    t0, first, nbytes, sr, mpv = time.time(), None, 0, SR, None
+    # The request is answered before any fork, so a backend that is down or
+    # refuses fails in the caller (exit 6 / 3), not silently in the log.
+    try:
+        r = urllib.request.urlopen(req, timeout=600)
+    except urllib.error.HTTPError as exc:
+        print(f"ERR: {b['id']} answered HTTP {exc.code} at {url}", file=sys.stderr)
+        return 3
+    except (urllib.error.URLError, OSError) as exc:
+        print(f"ERR: {b['id']} unreachable at {url} ({exc})", file=sys.stderr)
+        return 6
+
+    # --bg: detach so `voice-say render --fast` returns while the stream keeps feeding the
+    # player in the background (fire-and-forget). The child does the HTTP-stream → mpv pump.
+    if bg:
+        print(f"streaming --fast in background ({b['id']})", file=sys.stderr)
+        sys.stderr.flush()
+        if os.fork() > 0:
+            return 0
+        os.setsid()
+        log = open(os.path.join(RUN_DIR, "voice-say-stream.log"), "ab", buffering=0)
+        os.dup2(log.fileno(), 1)
+        os.dup2(log.fileno(), 2)
+
+    try:
+        with r:
+            m = re.search(r"rate=(\d+)", r.headers.get("Content-Type", ""))
+            sr = int(m.group(1)) if m else SR
+            if play:
+                ctl = (shutil.which("voice-ctl")
+                       or os.path.join(os.path.dirname(os.path.realpath(__file__)), "voice-ctl"))
+                subprocess.run([ctl, "stop"], capture_output=True, check=False)  # best-effort: free the IPC socket
+                try:
+                    os.remove(MPV_SOCK)
+                except OSError:
+                    pass
+                mpv = subprocess.Popen(
+                    ["mpv", "--no-video", "--really-quiet", f"--input-ipc-server={MPV_SOCK}",
+                     "--demuxer=rawaudio", "--demuxer-rawaudio-format=s16le",
+                     "--demuxer-rawaudio-channels=1", f"--demuxer-rawaudio-rate={sr}", "-"],
+                    stdin=subprocess.PIPE)
+            while True:
+                chunk = r.read(8192)
+                if not chunk:
+                    break
+                if first is None:
+                    first = time.time() - t0
+                nbytes += len(chunk)
+                if buf is not None:
+                    buf.extend(chunk)
+                if mpv:
+                    try:
+                        mpv.stdin.write(chunk)
+                    except BrokenPipeError:
+                        break
+    except (urllib.error.URLError, OSError) as exc:
+        print(f"ERR: {b['id']} stream from {url} broke off ({exc})", file=sys.stderr)
+        return 3
+
+    if mpv:
+        try:
+            mpv.stdin.close()
+        except BrokenPipeError:
+            pass
+    if buf is not None and out_path:
+        with wave.open(out_path, "wb") as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(sr)
+            w.writeframes(bytes(buf))
+
+    audio_s = nbytes / 2 / sr
+    ttfb = f"{first:.2f}s" if first is not None else "n/a"
+    extra = f" -> {out_path}" if out_path else ""
+    print(f"streamed: backend={b['id']} (first audio {ttfb}, {audio_s:.1f}s audio){extra}",
+          file=sys.stderr)
+    if mpv:
+        mpv.wait()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

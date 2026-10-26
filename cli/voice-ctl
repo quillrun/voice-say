@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# voice-ctl — drive whichever player currently owns audio playback.
+#
+# Both `voice-say render` (which spawns mpv) and any compatible client
+# (e.g. a native macOS app exposing an mpv-IPC server) listen on a
+# Unix socket that speaks the same mpv-compatible JSON-line IPC.
+# Try them in order:
+#
+#   1. $TMPDIR/voice-mpv.sock     — voice-say render's mpv (precise ±N seek)
+#   2. $TMPDIR/voice-sayapp.sock  — the macOS app's IPC server
+#   3. media-remote (fallback) — macOS MediaRemote, routes to Now
+#                                Playing (Music, Safari, Spotify, …)
+#
+# Single-player coordination means only one of (1)/(2) is alive at a
+# time. The media-remote fallback is macOS-only; on Linux the socket
+# path is the only option.
+#
+# Subcommands:
+#   voice-ctl toggle              # play/pause
+#   voice-ctl seek <±seconds>     # relative seek
+#   voice-ctl stop                # quit playback + clean socket
+#   voice-ctl status              # is something playing?
+
+set -euo pipefail
+
+# The per-user temp dir (0700 on macOS), the folder the app finds with
+# NSTemporaryDirectory(); in the shared /tmp another local user could plant
+# a socket and take over the controls.
+RUN_DIR="${TMPDIR:-$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || true)}"
+RUN_DIR="${RUN_DIR:-/tmp}"; RUN_DIR="${RUN_DIR%/}"
+MPV_SOCK="$RUN_DIR/voice-mpv.sock"
+APP_SOCK="${VOICESAY_APP_SOCKET:-$RUN_DIR/voice-sayapp.sock}"
+PID_FILE="$RUN_DIR/voice-last.pid"
+
+# Look up media-remote next to voice-ctl itself so the script stays
+# portable across machines. Falls back to common install paths.
+SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)"
+MEDIA_REMOTE=""
+for candidate in "${SCRIPT_DIR}/media-remote" \
+                 "${HOME}/.local/bin/media-remote" \
+                 "/usr/local/bin/media-remote" \
+                 "/opt/homebrew/bin/media-remote"; do
+    if [ -x "$candidate" ]; then MEDIA_REMOTE="$candidate"; break; fi
+done
+
+# Optional feedback sounds (e.g. for a hardware key that runs voice-ctl): a
+# `voice-ctl-cue` command on PATH, or the one $VOICE_CTL_CUE names, is called
+# with "click" when a control lands and "error" when no player is live.
+# Backgrounded; a missing cue command is skipped and never changes the exit code.
+CUE_CMD="${VOICE_CTL_CUE:-voice-ctl-cue}"
+VOICE_LOG="$RUN_DIR/voice-ctl.log"
+
+play_cue() {
+  command -v "$CUE_CMD" >/dev/null 2>&1 && "$CUE_CMD" "$1" >/dev/null 2>&1 &
+  return 0
+}
+
+log_voice() {
+  printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$1" >> "$VOICE_LOG" 2>/dev/null || true
+}
+
+# Send one JSON-line command to the first existing socket. Returns 0 on
+# success, 1 if no socket is alive or the send failed.
+# socat is required for the Unix-socket IPC; if it's missing, every send
+# fails (return 1) and the caller drops to the media-remote fallback.
+ipc() {
+  local payload="$1"
+  command -v socat >/dev/null 2>&1 || return 1
+  for sock in "$MPV_SOCK" "$APP_SOCK"; do
+    if [ -S "$sock" ]; then
+      if printf '%s\n' "$payload" | socat -T 1 - "UNIX-CONNECT:$sock" >/dev/null 2>&1; then
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
+# True when socat is unavailable OR no IPC socket is live — i.e. we are
+# about to use the media-remote fallback and should announce the offline
+# state once.
+no_live_player() {
+  command -v socat >/dev/null 2>&1 || return 0
+  [ -S "$MPV_SOCK" ] || [ -S "$APP_SOCK" ] || return 0
+  return 1
+}
+
+mr() {
+  [ -n "$MEDIA_REMOTE" ] && [ -x "$MEDIA_REMOTE" ] || return 1
+  "$MEDIA_REMOTE" "$@" >/dev/null 2>&1
+}
+
+cmd="${1:-status}"
+
+case "$cmd" in
+  toggle)
+    # PREFLIGHT: no socat / no live socket -> error cue before the
+    # media-remote fallback (additive; does not change control flow).
+    if no_live_player; then
+      play_cue error
+      log_voice "toggle: no live player, media-remote fallback"
+    fi
+    if ipc '{"command":["cycle","pause"]}'; then
+      play_cue click
+      echo "toggled"
+    elif mr toggle; then echo "toggled (media-remote)"
+    else echo "no playback" >&2; exit 1
+    fi
+    ;;
+  seek)
+    n="${2:-}"
+    # A plain number only: it is spliced into the mpv JSON command below,
+    # where a leading + is not valid JSON.
+    [[ "$n" =~ ^[+-]?[0-9]+(\.[0-9]+)?$ ]] || { echo "usage: voice-ctl seek <±seconds>" >&2; exit 2; }
+    n="${n#+}"
+    # PREFLIGHT: error cue before the media-remote fallback.
+    if no_live_player; then
+      play_cue error
+      log_voice "seek $n: no live player, media-remote fallback"
+    fi
+    if ipc "{\"command\":[\"seek\",$n,\"relative\"]}"; then
+      play_cue click
+      echo "seek ${n}s"
+    elif [ "${n#-}" != "$n" ]; then
+      mr skip-backward "${n#-}" && echo "skip -${n#-}s (media-remote)" || { echo "no playback" >&2; exit 1; }
+    else
+      mr skip-forward "$n" && echo "skip +${n}s (media-remote)" || { echo "no playback" >&2; exit 1; }
+    fi
+    ;;
+  stop)
+    stopped=0
+    ipc '{"command":["quit"]}' && stopped=1
+    if [ -f "$PID_FILE" ]; then
+      pid=$(cat "$PID_FILE")
+      # Only an mpv: the pid may belong to another process by now.
+      case "$(ps -p "$pid" -o comm= 2>/dev/null)" in
+        *mpv) kill "$pid" 2>/dev/null && stopped=1 ;;
+      esac
+      rm -f "$PID_FILE"
+    fi
+    rm -f "$MPV_SOCK"
+    if [ "$stopped" = "1" ]; then echo "stopped"
+    elif mr pause; then echo "paused (media-remote)"
+    else echo "no playback" >&2; exit 1
+    fi
+    ;;
+  status)
+    if [ -S "$MPV_SOCK" ] || [ -S "$APP_SOCK" ]; then echo "playing"; else echo "idle"; fi
+    ;;
+  *)
+    echo "usage: voice-ctl {toggle|seek <±n>|stop|status}" >&2
+    exit 2
+    ;;
+esac

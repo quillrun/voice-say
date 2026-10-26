@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- macOS LaunchAgent template for the voice-say HTTP daemon.
+
+The label (local.voicesay.daemon) is what the VoiceSay macOS app's
+Start/Restart/Stop controls target — keep them in sync.
+
+Install, from the repo root after `make setup`:
+
+    # 1. Copy to ~/Library/LaunchAgents/ with substitutions
+    sed -e "s|__PYTHON__|$PWD/daemon/.venv/bin/python|g" \
+        -e "s|__WORKDIR__|$PWD/daemon|g" \
+        -e "s|__LOGDIR__|$HOME/Library/Logs|g" \
+        daemon/launchd/local.voicesay.daemon.plist.example \
+      > ~/Library/LaunchAgents/local.voicesay.daemon.plist
+
+    # 2. Load
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.voicesay.daemon.plist
+
+    # 3. Verify
+    curl -s http://127.0.0.1:8890/health
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.voicesay.daemon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PYTHON__</string>
+        <string>-m</string>
+        <string>voice_say.http_server</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__WORKDIR__</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>__LOGDIR__/voice-say.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__LOGDIR__/voice-say.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>VOICE_SAY_PORT</key>
+        <string>8890</string>
+        <!-- Optional: set VOICE_SAY_DATA_ROOT to override the data dir
+             (default: data_root in config.local.toml, ./data = daemon/data).
+        <key>VOICE_SAY_DATA_ROOT</key>
+        <string>/path/to/data</string>
+        -->
+        <!-- Optional: let ONE browser origin read the daemon cross-origin.
+             Never "*": that lets every web page you open read your whole
+             library (transcripts and audio).
+        <key>VOICE_SAY_CORS</key>
+        <string>http://localhost:5173</string>
+        -->
+        <!-- NOTE: do NOT set VOICE_SAY_DEFAULT_BACKEND / VOICE_SAY_DEFAULT_VOICE
+             here if you want the Settings page to be able to change them —
+             env vars take precedence over the config.local.toml the app
+             writes via POST /config. -->
+    </dict>
+
+    <!-- Standard, NOT Background: darwinbg confines the daemon and its ffmpeg
+         children to E-cores, measured as the main longform render stall.
+         The daemon does real-time audio work. -->
+    <key>ProcessType</key>
+    <string>Standard</string>
+    <key>LowPriorityIO</key>
+    <false/>
+</dict>
+</plist>

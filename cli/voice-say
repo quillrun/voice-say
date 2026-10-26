@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# voice-say — the library CLI (find, search, tag, retitle, star, delete).
+# Runs `python -m voice_say.cli` from the daemon's venv next to this script,
+# or any python3 with the daemon package on its path. `voice-say --help`.
+set -euo pipefail
+HERE="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd -P)"
+[ -d "$HERE/../daemon" ] || HERE="$(cd "$(dirname "$0")" && pwd -P)"
+DAEMON_DIR="$HERE/../daemon"
+# -I: the current directory is not on sys.path, so a json.py (or any module)
+# in the folder the command runs from is never imported.
+if [ -x "$DAEMON_DIR/.venv/bin/python" ]; then
+  exec "$DAEMON_DIR/.venv/bin/python" -I -m voice_say.cli "$@"
+fi
+exec python3 -I -c 'import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); runpy.run_module("voice_say.cli", run_name="__main__", alter_sys=True)' "$DAEMON_DIR" "$@"

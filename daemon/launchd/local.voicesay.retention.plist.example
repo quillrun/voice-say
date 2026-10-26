@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Monthly retention job: cold-tiers completed audio unplayed for 180+
+     days and compacts the progress + overlays JSONLs.
+
+Install: same shape as local.voicesay.daemon.plist.example — substitute
+__PYTHON__, __WORKDIR__ and __LOGDIR__, copy into ~/Library/LaunchAgents/.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.voicesay.retention</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PYTHON__</string>
+        <string>-m</string>
+        <string>voice_say.retention</string>
+        <string>--cold-days</string>
+        <string>180</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__WORKDIR__</string>
+
+    <!-- Monthly: 04:00 on the 1st of every month -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Day</key>
+        <integer>1</integer>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__LOGDIR__/voice-say-retention.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__LOGDIR__/voice-say-retention.err.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>LowPriorityIO</key>
+    <true/>
+    <!-- AbandonProcessGroup so launchd doesn't kill the retention job
+         if it takes longer than expected. -->
+    <key>AbandonProcessGroup</key>
+    <true/>
+</dict>
+</plist>

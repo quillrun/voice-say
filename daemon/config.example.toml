@@ -1,0 +1,73 @@
+# voice-say — default configuration (committed generic baseline)
+#
+# Precedence (highest to lowest):
+#   1. Environment variables — the VOICE_SAY_ prefix (only some keys; see below)
+#   2. config.local.toml   (gitignored — put your machine-local edits here)
+#   3. config.example.toml (this file)
+#
+# Setup: `make setup` seeds config.local.toml from this file.
+# Full reference: docs/setup/{install,configuration}.md.
+#
+# Env-overridable keys (VOICE_SAY_ prefix; old SAY_MCP_ names still read): data_root → VOICE_SAY_DATA_ROOT,
+# default_backend → VOICE_SAY_DEFAULT_BACKEND, default_voice → VOICE_SAY_DEFAULT_VOICE,
+# say_threshold_chars → VOICE_SAY_SAY_THRESHOLD_CHARS, daemon_port → VOICE_SAY_PORT,
+# cors_origins → VOICE_SAY_CORS. The remaining keys are TOML-only.
+#
+# The backend catalog (ports / voices / output_format) is overridden separately
+# via the VOICE_SAY_BACKENDS_CONFIG env var → a JSON file (see docs/setup/backends.md).
+
+# Directory where rendered audio files and the SQLite store (voice.db) are written.
+data_root = "./data"
+
+# TTS backend to use when the caller does not specify one.
+# Must be an id in the backend catalog (built-in: kokoro).
+default_backend = "kokoro"
+
+# Voice identifier passed to the default backend when none is specified by the caller.
+default_voice = "default"
+
+# List of tag strings accepted by the /render endpoint. An empty list means the
+# vocabulary is open and any tag value is allowed.
+allowed_tags = []             # empty = open vocabulary (any tag allowed)
+
+# TCP port the HTTP daemon listens on.
+daemon_port = 8890
+
+# Hard limit on the number of characters accepted in a single render request.
+# Requests exceeding this are rejected with HTTP 400 (the `request` stage).
+max_render_chars = 200000
+
+# Max chunks per single /render_longform call (~1200 chars/chunk). The default 40
+# (~48k chars / ~45 min audio) is a client-timeout / self-DoS guard for the public
+# HTTP surface. A trusted local box rendering long episodes server-side can raise
+# it. Env: VOICE_SAY_LONGFORM_MAX_CHUNKS.
+longform_max_chunks = 40
+
+# Read-along alignment: word timings measured from each render's audio by
+# macOS's on-device recognizer (helper built by `make setup`), so the reader's
+# highlight follows the voice. Runs only while no render is in progress.
+# Renders under align_min_s seconds keep the even pace. Env: VOICE_SAY_ALIGN.
+align = true
+align_locale = "en-US"
+align_min_s = 15
+
+# Renders whose text length is <= this are classified kind="say" (short
+# utterances / status pings); longer renders are kind="render". The app
+# surfaces "Says" as a built-in category. Env: VOICE_SAY_SAY_THRESHOLD_CHARS.
+# This 280 mirrors the in-code fallback in voice_say/config.py
+# (SAY_THRESHOLD_CHARS); keep the two in sync.
+say_threshold_chars = 280
+
+# A single allowed Access-Control-Allow-Origin value (one origin, e.g.
+# "http://127.0.0.1:5173"). This is emitted verbatim as the response header —
+# it is NOT a comma-separated allow-list. Never "*": every web page you open
+# could then read your whole library (transcripts and audio).
+# Leave empty to restrict to loopback (127.0.0.1 / ::1) only.
+cors_origins = ""             # empty = loopback only
+
+# Words the voice mispronounces: written form → how to say it. Applied to the
+# text sent to the backend only (whole words, case-sensitive; "Name's" follows
+# "Name"); the archived transcript keeps the written form. TOML-only.
+[pronounce]
+# Siobhan = "Shiv-awn"
+# Q4_K_M = "Q four K M"

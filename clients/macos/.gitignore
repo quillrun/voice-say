@@ -1,0 +1,7 @@
+# Build outputs — reproducible via ./build-app.sh
+build/
+.build/
+*.dSYM/
+
+# Xcode/SwiftPM per-user state (created when the package is opened in Xcode)
+.swiftpm/

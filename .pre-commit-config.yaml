@@ -1,0 +1,19 @@
+# voice-say pre-commit configuration
+#
+# Install:
+#   pip install pre-commit
+#   pre-commit install
+#
+# Or, without the pre-commit tool, link the script in as the hook (it follows
+# later changes to the script; a copy works too):
+#   ln -s ../../scripts/publishable-check.sh .git/hooks/pre-commit
+
+repos:
+  - repo: local
+    hooks:
+      - id: publishable-check
+        name: Publishable gate (secrets / banned terms / config / tests / required files)
+        language: script
+        entry: scripts/publishable-check.sh
+        pass_filenames: false
+        always_run: true

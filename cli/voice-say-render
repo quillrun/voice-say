@@ -1,0 +1,423 @@
+#!/usr/bin/env bash
+# voice-say render — make audio through the local voice-say stack: render, save
+# to the library, play headlessly (mpv). The library: `voice-say --help`.
+# (This script runs as `voice-say render`; it is not installed on PATH.)
+#
+#   voice-say render "a sentence"                      render + play
+#   voice-say render --file=/tmp/x.txt --title="…"     anything longer (no shell quoting)
+#   voice-say render --no-play … / --out=/path.mp3     save without playing / keep a copy
+#   voice-say render --json …                          one JSON line on stdout (for scripts)
+#   voice-say render --fast "quick reply" [--wait]     instant, streamed, unarchived
+#   voice-say render --stop | --toggle | --seek=±N     control playback (= voice-ctl)
+#
+# Flags: --title=<3–8 words> | --title-from=<file.md> (its first "# " heading);
+#   --series=<name> --episode=<n>; --tag=<name> (repeatable, existing tags only;
+#   --new-tag=<name> coins one on purpose); --voice=<id>; --backend=<id>;
+#   --stream (force the chunked path); --speed=<f>; --format=<mp3|wav>;
+#   --json: stdout is one object {id, path, out, title, duration_s, backend,
+#   voice, kind, playing}, the other lines go to stderr (not with --fast).
+#   A value flag also takes its value as the next word: --file notes.txt.
+#
+# Rules the tool enforces (exit 4, nothing rendered):
+#   - a title is required for any text over the daemon's say threshold
+#     (GET /config say_threshold_chars; the stored row is a library entry, not a ping);
+#   - every --tag must already be in use (`voice-say tags`); unknown → the
+#     nearest existing ones are named; --new-tag=<name> adds a new one.
+# Text over 1200 characters renders as one episode (~1 s per 10 characters),
+# live under Rendering in the VoiceSay app; a failed episode keeps a draft.
+#
+# Expression (not --fast): a backend that reads inline cues sets
+# supports_emotion_tags in its catalog entry; a cue is a bracketed word at the
+# start or mid-text, e.g. "[whisper] Keep this between us." Which cues mean
+# something is up to that backend's model; for other backends the daemon
+# strips them.
+# Pronunciation fixes live in the daemon config ([pronounce]), not in the text.
+#
+# Exit: 2 no text or unreadable --file · 3 render failed (stderr names the stage / kept draft) ·
+#   4 refused (flag, title, tag, --episode, mpv missing) · 6 daemon down
+#   (start it with `make run` in the voice-say repo) · 7 timed out
+#   (a render that started still lands in the library — check voice-say history).
+#
+# Licence: the audio carries the backend model's licence (the default,
+# Kokoro-82M, is Apache-2.0); check it before using the audio elsewhere.
+#
+# Daemon: ${VOICE_SAY_DAEMON_URL:-http://127.0.0.1:8890} owns the render, the
+# archive and the voice.db row; this script POSTs and plays. Playback: mpv with
+# an IPC socket at $TMPDIR/voice-mpv.sock, driven by voice-ctl.
+
+set -euo pipefail
+# Inline Python runs with -I so modules in the caller's directory are never imported.
+
+# Human-readable lines: stdout, or stderr under --json (stdout is the JSON).
+note() { if [ "${JSON:-0}" = "1" ]; then echo "$@" >&2; else echo "$@"; fi; }
+
+# The player's socket and state files live in the per-user temp dir (0700 on
+# macOS), the folder the app finds with NSTemporaryDirectory(); in the shared
+# /tmp another local user could plant them.
+RUN_DIR="${TMPDIR:-$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || true)}"
+RUN_DIR="${RUN_DIR:-/tmp}"; RUN_DIR="${RUN_DIR%/}"
+MPV_SOCK="$RUN_DIR/voice-mpv.sock"
+PID_FILE="$RUN_DIR/voice-last.pid"
+LAST_PATH_FILE="$RUN_DIR/voice-last.path"
+
+# voice-ctl is expected next to this script, or on PATH.
+VOICE_CTL="$(dirname "$0")/voice-ctl"
+[ -x "$VOICE_CTL" ] || VOICE_CTL="$(command -v voice-ctl || echo "$HOME/.local/bin/voice-ctl")"
+
+# Env: VOICE_SAY_RENDER_{BACKEND,VOICE,TIMEOUT,STREAM_THRESHOLD,TITLE_THRESHOLD,FAST_BACKEND},
+# VOICE_SAY_DAEMON_URL. The pre-2026-10-26 names (SAY_DEFAULT_BACKEND,
+# SAY_DEFAULT_VOICE, SAY_TIMEOUT, SAY_STREAM_THRESHOLD, SAY_TITLE_THRESHOLD,
+# SAY_MCP_DAEMON_URL) are read when the new one is unset.
+BACKEND="${VOICE_SAY_RENDER_BACKEND:-${SAY_DEFAULT_BACKEND:-}}"     # empty = the daemon's default_backend
+VOICE="${VOICE_SAY_RENDER_VOICE:-${SAY_DEFAULT_VOICE:-default}}"  # "default" = let the backend pick
+SPEED="1.0"
+FORMAT="mp3"
+PLAY=1
+JSON=0
+WAIT=0          # --wait: with --fast, play in the FOREGROUND and block until playback ends
+OUT=""
+TEXT=""
+FILE=""
+TITLE=""
+TITLE_FROM=""
+SERIES=""
+EPISODE=""
+ACTION="render"
+SEEK_AMOUNT=""
+TAGS=()
+NEW_TAGS=()     # --new-tag: coined on purpose, skipped by the vocabulary check
+STREAM=0
+STREAM_THRESHOLD="${VOICE_SAY_RENDER_STREAM_THRESHOLD:-${SAY_STREAM_THRESHOLD:-1200}}"
+
+# A value flag also takes its value as the next word (--file notes.txt): that
+# form is rewritten to --flag=value so the parser below sees one shape.
+ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --backend|--voice|--speed|--format|--out|--file|--title|--title-from|--series|--episode|--seek|--tag|--new-tag)
+      [ $# -ge 2 ] || { echo "ERR: $1 needs a value ($1=<value> or $1 <value>)" >&2; exit 4; }
+      ARGS+=("$1=$2"); shift 2 ;;
+    *) ARGS+=("$1"); shift ;;
+  esac
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
+
+for arg in "$@"; do
+  case "$arg" in
+    --backend=*) BACKEND="${arg#*=}"; BACKEND_EXPLICIT=1 ;;
+    --fast)      FAST=1 ;;  # stream from the fast backend, unarchived; explicit --backend= wins
+    --voice=*)   VOICE="${arg#*=}"; VOICE_EXPLICIT=1 ;;
+    --speed=*)   SPEED="${arg#*=}" ;;
+    --format=*)  FORMAT="${arg#*=}"; FORMAT_EXPLICIT=1 ;;
+    --out=*)     OUT="${arg#*=}" ;;
+    --file=*)    FILE="${arg#*=}" ;;
+    --title=*)      TITLE="${arg#*=}" ;;       # library title, sent with the render
+    --title-from=*) TITLE_FROM="${arg#*=}" ;;  # extract first '# ' H1 from this md file
+    --series=*)  SERIES="${arg#*=}" ;;         # series name (the app lists a series in episode order)
+    --episode=*) EPISODE="${arg#*=}" ;;        # episode number within --series
+    --no-play)   PLAY=0 ;;
+    --json)      JSON=1 ;;
+    --wait)      WAIT=1 ;;  # --fast: stay foreground, block until playback finishes (half-duplex callers)
+    --stream)    STREAM=1 ;;  # forces chunked /render_longform (shows live in the app)
+    --stop)      ACTION="stop" ;;
+    --toggle)    ACTION="toggle" ;;
+    --seek=*)    ACTION="seek"; SEEK_AMOUNT="${arg#*=}" ;;
+    --tag=*)     TAGS+=("${arg#*=}") ;;
+    --new-tag=*) TAGS+=("${arg#*=}"); NEW_TAGS+=("${arg#*=}") ;;
+    --help|-h)
+      sed -n '2,/^set -euo/p' "$0" | sed -n '/^# /p' | sed 's/^# //'
+      exit 0 ;;
+    --*)         echo "ERR: unknown flag '$arg'" >&2; exit 4 ;;
+    *)           TEXT="$TEXT $arg" ;;
+  esac
+done
+
+# --fast streams from VOICE_SAY_RENDER_FAST_BACKEND (empty = the daemon's default_backend),
+# unless an explicit --backend= was given.
+FAST_BACKEND="${VOICE_SAY_RENDER_FAST_BACKEND:-}"
+
+# --help, --no-play and the playback controls need no mpv: check only what this run uses.
+need_voice_ctl() { [ -x "$VOICE_CTL" ] || { echo "ERR: voice-ctl not found at $VOICE_CTL" >&2; exit 4; }; }
+[ "$ACTION" != "render" ] && need_voice_ctl
+if [ "$ACTION" = "render" ] && [ "$PLAY" = "1" ]; then
+  command -v mpv >/dev/null 2>&1 || { echo "ERR: mpv not installed (brew install mpv), or pass --no-play" >&2; exit 4; }
+  need_voice_ctl
+fi
+
+case "$ACTION" in
+  stop)   exec "$VOICE_CTL" stop ;;
+  toggle) exec "$VOICE_CTL" toggle ;;
+  seek)
+    # Fast-fail mirror of voice-ctl's own seek validation. Intentional
+    # duplication: it preserves render's exit-4 flag-error contract + the clearer
+    # "--seek=… must be a number" message instead of deferring to
+    # voice-ctl (which rejects with exit 2). voice-ctl remains the contract owner.
+    [[ "$SEEK_AMOUNT" =~ ^[+-]?[0-9]+(\.[0-9]+)?$ ]] \
+      || { echo "ERR: --seek=$SEEK_AMOUNT must be a number of seconds (e.g. --seek=+15, --seek=-10)" >&2; exit 4; }
+    exec "$VOICE_CTL" seek "$SEEK_AMOUNT" ;;
+esac
+
+case "$EPISODE" in
+  ""|*[!0-9]*) [ -n "$EPISODE" ] && { echo "ERR: --episode=$EPISODE must be a whole number >= 0" >&2; exit 4; } ;;
+esac
+
+[ -z "$OUT" ] && { OUT="$RUN_DIR/voice-$(date +%Y%m%d-%H%M%S).$FORMAT"; OUT_DEFAULT=1; }
+
+if [ "$SPEED" != "1.0" ]; then
+  echo "WARN: --speed=$SPEED may be ignored by ${BACKEND:-the default backend}" >&2
+fi
+
+if [ -n "$FILE" ]; then
+  [ -f "$FILE" ] && [ -r "$FILE" ] || { echo "ERR: --file=$FILE is not a readable file" >&2; exit 2; }
+  TEXT="$(cat "$FILE")"
+else
+  TEXT="$(echo "$TEXT" | sed 's/^ *//')"
+fi
+if [ -z "$TEXT" ]; then
+  echo "ERR: no text provided. Pass text as arg or --file=<path>." >&2
+  exit 2
+fi
+
+# [emotion] tags pass through: the daemon strips them for backends without
+# emotion support (supports_emotion_tags in backends.json).
+
+DAEMON_URL="${VOICE_SAY_DAEMON_URL:-${SAY_MCP_DAEMON_URL:-http://127.0.0.1:8890}}"
+
+USER_TAGS_JSON=$(printf '%s\n' "${TAGS[@]+"${TAGS[@]}"}" \
+  | python3 -I -c "import sys, json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))")
+
+# "default" sentinel = daemon picks the backend's default voice.
+VOICE_FIELD="$VOICE"
+if [ "$VOICE_FIELD" = "default" ]; then
+  VOICE_FIELD=""
+fi
+
+if [ "$JSON" = "1" ] && [ "${FAST:-}" = "1" ] && [ -z "${BACKEND_EXPLICIT:-}" ]; then
+  echo "ERR: --json needs a library row; --fast streams without one (drop one of them)" >&2
+  exit 4
+fi
+
+# --fast → instant streaming straight to the player (low time-to-first-audio), bypassing the
+# daemon archive. Explicit --backend= overrides --fast and keeps the archived daemon path.
+# (Title/tags/series/episode don't apply to the streaming preview — use --backend=<id> for an archived render.)
+if [ "${FAST:-}" = "1" ] && [ -z "${BACKEND_EXPLICIT:-}" ]; then
+  GSTREAM="$(dirname "$0")/voice-say-stream"
+  if [ -x "$GSTREAM" ]; then
+    [ -n "$TITLE$SERIES$EPISODE" ] && echo "note: --fast streams without archiving; --title/--series/--episode ignored" >&2
+    GARGS=(--out="$OUT" --backend="$FAST_BACKEND")
+    [ -n "${VOICE_EXPLICIT:-}" ] && GARGS+=(--voice="$VOICE")
+    if [ "$PLAY" = "0" ]; then
+      GARGS+=(--no-play)   # render-only: stay foreground so --out is ready on return
+    elif [ "$WAIT" = "1" ]; then
+      :                    # --wait: stay foreground (voice-say-stream's mpv.wait blocks till playback ends)
+    else
+      GARGS+=(--bg)        # playing: auto-background, return immediately (fire-and-forget)
+    fi
+    printf '%s' "$TEXT" | python3 "$GSTREAM" "${GARGS[@]}"
+    exit $?
+  fi
+fi
+
+# Durable library title, sent with the render so the daemon sets it on the new
+# row (instead of the "It is a {weekday}…" first-sentence auto-title).
+# --title wins; else the first '# ' H1 of --title-from. Resolved before the
+# title rule, so a --title-from that yields nothing counts as no title.
+TITLE_FINAL="$TITLE"
+if [ -z "$TITLE_FINAL" ] && [ -n "$TITLE_FROM" ]; then
+  if [ -f "$TITLE_FROM" ]; then
+    TITLE_FINAL=$(awk '/^# /{sub(/^# /,""); print; exit}' "$TITLE_FROM")
+  fi
+  [ -z "$TITLE_FINAL" ] && echo "WARN: --title-from=$TITLE_FROM has no readable '# ' H1 — skipping title" >&2
+fi
+
+# Title rule: anything over the daemon's say threshold is a library entry and
+# needs a title (the first-sentence fallback makes unusable Browse titles).
+# The threshold comes from GET /config; VOICE_SAY_RENDER_TITLE_THRESHOLD (default 280) is
+# the fallback when the daemon does not answer it.
+if [ -z "$TITLE_FINAL" ]; then
+  TITLE_THRESHOLD=$(curl -s -m 3 "$DAEMON_URL/config" 2>/dev/null \
+    | python3 -I -c "import sys, json; print(int(json.load(sys.stdin)['say_threshold_chars']))" 2>/dev/null \
+    || echo "${VOICE_SAY_RENDER_TITLE_THRESHOLD:-${SAY_TITLE_THRESHOLD:-280}}")
+  if [ "${#TEXT}" -gt "$TITLE_THRESHOLD" ]; then
+    echo "ERR: ${#TEXT} characters is a library entry (over the say threshold of $TITLE_THRESHOLD) — it needs a title." >&2
+    echo "     Pass --title=\"<3–8 words>\" or --title-from=<file.md> (its first '# ' heading)." >&2
+    exit 4
+  fi
+fi
+
+# Tag rule: every --tag must already be in use; --new-tag coins one on purpose.
+# voice-say (next to this script, else on PATH) does the check against GET /tags
+# and names the nearest existing tags on refusal.
+if [ "${#TAGS[@]}" -gt 0 ]; then
+  CHECK=()
+  for t in "${TAGS[@]}"; do
+    skip=0
+    for n in "${NEW_TAGS[@]+"${NEW_TAGS[@]}"}"; do [ "$t" = "$n" ] && skip=1; done
+    [ "$skip" = 0 ] && CHECK+=("$t")
+  done
+  if [ "${#CHECK[@]}" -gt 0 ]; then
+    VOICE_SAY="$(dirname "$0")/voice-say"
+    [ -x "$VOICE_SAY" ] || VOICE_SAY="$(command -v voice-say || true)"
+    if [ -z "$VOICE_SAY" ]; then
+      echo "ERR: voice-say not found (needed to check --tag against the library); install with cli/install.sh" >&2
+      exit 4
+    fi
+    CHECK_RC=0
+    "$VOICE_SAY" tags --check "${CHECK[@]}" >/dev/null || CHECK_RC=$?
+    [ "$CHECK_RC" = 6 ] && exit 6   # daemon down: voice-say already said so
+    if [ "$CHECK_RC" != 0 ]; then
+      echo "     Reuse an existing tag, or pass --new-tag=<name> to add one on purpose." >&2
+      exit 4
+    fi
+  fi
+fi
+
+RENDER_PAYLOAD=$(BACKEND="$BACKEND" VOICE_FIELD="$VOICE_FIELD" SPEED="$SPEED" \
+  USER_TAGS_JSON="$USER_TAGS_JSON" TITLE_FINAL="$TITLE_FINAL" SERIES="$SERIES" \
+  EPISODE="$EPISODE" python3 -I -c "
+import json, sys, os
+p = {
+  'text': sys.stdin.read(),
+  'speed': float(os.environ['SPEED']),
+  'tags': json.loads(os.environ.get('USER_TAGS_JSON') or '[]'),
+}
+if os.environ['BACKEND']:
+    p['backend'] = os.environ['BACKEND']
+voice = os.environ.get('VOICE_FIELD')
+if voice:
+    p['voice'] = voice
+for key, env in (('title', 'TITLE_FINAL'), ('series', 'SERIES')):
+    if os.environ.get(env):
+        p[key] = os.environ[env]
+if os.environ.get('EPISODE'):
+    p['episode'] = int(os.environ['EPISODE'])
+print(json.dumps(p))" <<< "$TEXT")
+
+# curl timeout. VOICE_SAY_RENDER_TIMEOUT wins. Otherwise 1 s per 10 chars, at
+# least 600 s: a slow model renders ~30 chars/s, and a fixed 600 s cut off a
+# 40k-char episode mid-render.
+TIMEOUT="${VOICE_SAY_RENDER_TIMEOUT:-${SAY_TIMEOUT:-}}"
+if [ -z "$TIMEOUT" ]; then
+  TIMEOUT=$(( ${#TEXT} / 10 )); [ "$TIMEOUT" -lt 600 ] && TIMEOUT=600
+fi
+
+# Select endpoint: longform (chunked) when --stream is set or the text is
+# long enough to benefit. No 'mode' field is sent: the daemon's default (stream)
+# broadcasts the episode so the app shows it under Rendering while it renders.
+ENDPOINT="/render"
+if [ "$STREAM" = "1" ] || [ "${#TEXT}" -gt "$STREAM_THRESHOLD" ]; then
+  ENDPOINT="/render_longform"
+fi
+
+RESPONSE_FILE=$(mktemp "$RUN_DIR/voice-say-resp.XXXXXX")
+# An interrupted render (Ctrl-C, a killed shell) leaves no empty file behind.
+trap 'rm -f "$RESPONSE_FILE"' EXIT
+# On failure curl still prints "000" for %{http_code}; keep its exit code
+# apart (an `|| echo 000` here once produced "000000" and hid the timeout).
+CURL_RC=0
+# The body goes on stdin: as an argument a long text overruns the argument limit.
+HTTP_CODE=$(printf '%s' "$RENDER_PAYLOAD" | curl -sS -m "$TIMEOUT" -X POST "$DAEMON_URL$ENDPOINT" \
+  -H "Content-Type: application/json" \
+  --data-binary @- \
+  -o "$RESPONSE_FILE" -w '%{http_code}' 2>/dev/null) || CURL_RC=$?
+
+if [ "$CURL_RC" = "28" ]; then
+  echo "ERR: no reply within ${TIMEOUT}s (raise with VOICE_SAY_RENDER_TIMEOUT)." >&2
+  echo "     If it had started, the daemon finishes and archives it — check history before retrying." >&2
+  echo "     If it was still queued behind another render, it was dropped." >&2
+  rm -f "$RESPONSE_FILE"
+  exit 7
+fi
+if [ "$CURL_RC" != "0" ] || [ "$HTTP_CODE" = "000" ]; then
+  echo "ERR: voice-say daemon unreachable at $DAEMON_URL" >&2
+  echo "     Start it with 'make run' in the voice-say repo." >&2
+  rm -f "$RESPONSE_FILE"
+  exit 6
+fi
+if [ "$HTTP_CODE" != "200" ]; then
+  echo "ERR: render HTTP $HTTP_CODE" >&2
+  # Printed on stdout, sent to stderr: the 2>/dev/null only hides a parse
+  # failure (then the raw body is shown instead).
+  python3 -I -c "import json; d=json.load(open('$RESPONSE_FILE')); print(f\"  stage: {d.get('error')}\\n  message: {d.get('message')}\"); d.get('saved_ts') and print(f\"  kept: {'draft' if d.get('partial') else 'row'} {d['saved_ts']} (the finished part; Continue render in the app finishes a draft)\")" >&2 2>/dev/null || cat "$RESPONSE_FILE" >&2
+  rm -f "$RESPONSE_FILE"
+  exit 3
+fi
+
+ARCHIVE_PATH=$(python3 -I -c "import json; print(json.load(open('$RESPONSE_FILE'))['archive_path'])")
+RENDER_TS=$(python3 -I -c "import json; print(json.load(open('$RESPONSE_FILE'))['ts'])")
+# backend, voice, kind, duration_s of the stored row, tab-separated
+IFS=$'\t' read -r GOT_BACKEND GOT_VOICE GOT_KIND GOT_DURATION < <(python3 -I -c "import json; d=json.load(open('$RESPONSE_FILE')); print('\t'.join(str(d.get(k) or '') for k in ('backend', 'voice', 'kind', 'duration_s')))")
+GOT_TITLE=$(python3 -I -c "import json; print((json.load(open('$RESPONSE_FILE')).get('overlay') or {}).get('title') or '')")
+HAS_OVERLAY=$(python3 -I -c "import json; print(1 if 'overlay' in json.load(open('$RESPONSE_FILE')) else '')")
+rm -f "$RESPONSE_FILE"
+
+# The default --out takes the archive's real extension (a WAV backend gives .wav).
+if [ -n "${OUT_DEFAULT:-}" ] && [ -z "${FORMAT_EXPLICIT:-}" ] && [ "${ARCHIVE_PATH##*.}" != "$ARCHIVE_PATH" ]; then
+  OUT="${OUT%.*}.${ARCHIVE_PATH##*.}"
+fi
+# Copy the daemon's archive file to OUT so mpv plays the user-requested path.
+# A daemon on another machine: its path is not here, so fetch it over HTTP.
+if [ -f "$ARCHIVE_PATH" ]; then
+  cp "$ARCHIVE_PATH" "$OUT"
+elif ! curl -sSf -m 120 "$DAEMON_URL/audio/$RENDER_TS" -o "$OUT"; then
+  echo "ERR: rendered (library id $RENDER_TS) but could not copy the audio to $OUT" >&2
+  exit 3
+fi
+note "rendered: $OUT ($(du -h "$OUT" | cut -f1), backend=${GOT_BACKEND:-${BACKEND:-?}} voice=${GOT_VOICE:-${VOICE_FIELD:-?}}) via voice-say"
+# A daemon older than render-time overlays ignores title/series/episode:
+# set them with POST /overlays instead. Best-effort: the render succeeded.
+if [ -n "$TITLE_FINAL$SERIES$EPISODE" ] && [ -z "$HAS_OVERLAY" ]; then
+  GOT_TITLE=$(RENDER_TS="$RENDER_TS" DAEMON_URL="$DAEMON_URL" TITLE_FINAL="$TITLE_FINAL" \
+    SERIES="$SERIES" EPISODE="$EPISODE" python3 -I -c "
+import os, json, sys, urllib.request
+e = os.environ
+body = {k: v for k, v in (('title', e['TITLE_FINAL']), ('series', e['SERIES'])) if v}
+if e['EPISODE']:
+    body['episode'] = int(e['EPISODE'])
+req = urllib.request.Request(f\"{os.environ['DAEMON_URL']}/overlays/{os.environ['RENDER_TS']}\",
+                             data=json.dumps(body).encode(),
+                             headers={'Content-Type': 'application/json'}, method='POST')
+try:
+    print(json.loads(urllib.request.urlopen(req, timeout=15).read()).get('title') or '')
+except Exception as e:
+    print(f'WARN: overlay set failed ({e})', file=sys.stderr)
+")
+fi
+if [ -n "$TITLE_FINAL" ]; then
+  if [ "$GOT_TITLE" = "$TITLE_FINAL" ]; then
+    note "titled: $TITLE_FINAL"
+  else
+    echo "WARN: title not set (daemon returned ${GOT_TITLE:-none})" >&2
+  fi
+fi
+
+if [ "$PLAY" = "1" ]; then
+  # Announce playback so any other client pauses its own player.
+  curl -sX POST "$DAEMON_URL/playback/active" \
+    -H "Content-Type: application/json" \
+    -d "{\"source\":\"cli\",\"ts\":\"$RENDER_TS\"}" >/dev/null 2>&1 || true
+
+  "$VOICE_CTL" stop >/dev/null 2>&1 || true
+
+  MPV_LOG="$RUN_DIR/voice-mpv.log"
+  mpv --no-video --really-quiet \
+      --input-ipc-server="$MPV_SOCK" \
+      "$OUT" >"$MPV_LOG" 2>&1 &
+  MPV_PID=$!
+  echo "$MPV_PID" > "$PID_FILE"
+  echo "$OUT" > "$LAST_PATH_FILE"
+  note "playing pid=$MPV_PID socket=$MPV_SOCK file=$OUT — voice-ctl toggle | seek ±N | stop"
+fi
+
+if [ "$JSON" = "1" ]; then
+  RENDER_TS="$RENDER_TS" ARCHIVE_PATH="$ARCHIVE_PATH" OUT="$OUT" GOT_TITLE="$GOT_TITLE" \
+  GOT_DURATION="$GOT_DURATION" GOT_BACKEND="$GOT_BACKEND" GOT_VOICE="$GOT_VOICE" \
+  GOT_KIND="$GOT_KIND" PLAY="$PLAY" python3 -I -c "
+import json, os
+e = os.environ
+print(json.dumps({'id': e['RENDER_TS'], 'path': e['ARCHIVE_PATH'], 'out': e['OUT'],
+                  'title': e['GOT_TITLE'] or None,
+                  'duration_s': float(e['GOT_DURATION']) if e['GOT_DURATION'] else None,
+                  'backend': e['GOT_BACKEND'] or None, 'voice': e['GOT_VOICE'] or None,
+                  'kind': e['GOT_KIND'] or None, 'playing': e['PLAY'] == '1'}))"
+fi
